@@ -269,15 +269,6 @@ class BleManager(
         }
     }
 
-    fun clearLatestReadings() {
-        _latestWeight.value = null
-        _latestBp.value = null
-        lastUploadedWeight = null
-        lastUploadedWeightTime = 0L
-        _statusText.value = "Scanning for scales and monitors..."
-        Log.i("BleManager", "Cleared latest readings from app display.")
-    }
-
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device

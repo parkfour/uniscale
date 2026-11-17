@@ -46,7 +46,6 @@ fun DashboardScreen(
     historyBp: List<com.uniscale.app.model.BloodPressureData> = emptyList(),
     onImportHistory: () -> Unit = {},
     onSyncWatch: () -> Unit = {},
-    onClearTodayData: () -> Unit = {},
     onRequestClientCertificate: ((String?) -> Unit) -> Unit = {},
     onPickSound: (current: String, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
     doses: List<Dose> = emptyList(),
@@ -120,7 +119,6 @@ fun DashboardScreen(
             onRequestClientCertificate = onRequestClientCertificate,
             onPickSound = onPickSound,
             onSyncWatch = onSyncWatch,
-            onClearTodayData = onClearTodayData,
             onDismiss = { showSettings = false }
         )
     }

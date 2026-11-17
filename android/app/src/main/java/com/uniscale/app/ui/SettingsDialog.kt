@@ -41,7 +41,6 @@ fun SettingsDialog(
     onRequestClientCertificate: ((String?) -> Unit) -> Unit = {},
     onPickSound: (current: String, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
     onSyncWatch: () -> Unit = {},
-    onClearTodayData: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -75,7 +74,6 @@ fun SettingsDialog(
     var isTesting by remember { mutableStateOf(false) }
     var testSuccess by remember { mutableStateOf<Boolean?>(null) }
     var noticeMessage by remember { mutableStateOf<String?>(null) }
-    var confirmClearToday by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -667,24 +665,6 @@ fun SettingsDialog(
                         OutlinedButton(onClick = onSyncWatch, modifier = Modifier.weight(1f)) {
                             Text("Watch", fontSize = 13.sp)
                         }
-                    }
-                    // Deletes today's readings on this phone (not the hub's), so it takes a second tap.
-                    OutlinedButton(
-                        onClick = {
-                            if (confirmClearToday) {
-                                confirmClearToday = false
-                                onClearTodayData()
-                            } else {
-                                confirmClearToday = true
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            if (confirmClearToday) "Tap again to delete today's readings" else "Clear Today",
-                            fontSize = 13.sp,
-                            color = Color(0xFFEF4444)
-                        )
                     }
 
                     HorizontalDivider()

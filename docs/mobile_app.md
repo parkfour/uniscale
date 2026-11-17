@@ -126,7 +126,6 @@ The app doesn't use Android Health Connect: it neither reads nor writes it. Each
 in the app's private storage (`LocalReadings`, `readings.json`) and uploaded to the hub; every sync uploads them again
 until the hub has them, so readings taken offline are sent later. The Weight and BP tiles show these plus the hub's
 history (`GET /api/history`), so a fresh install shows past readings as soon as the hub is reachable.
-**Clear Today** (Settings → Data) deletes today's readings on the phone; the hub keeps its copy.
 
 ---
 

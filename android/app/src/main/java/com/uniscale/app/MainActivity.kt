@@ -168,15 +168,6 @@ class MainActivity : ComponentActivity() {
                     historyBp = historyBp.value,
                     onImportHistory = { loadHistory() },
                     onSyncWatch = { syncWatch() },
-                    onClearTodayData = {
-                        lifecycleScope.launch {
-                            bleManager.clearLatestReadings()
-                            localReadings.clearToday()
-                            val msg = "Cleared today's readings on this phone (the hub keeps its copy)"
-                            loadHistory()
-                            android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    },
                     onRequestClientCertificate = { onSelected ->
                         selectClientCertificate(onSelected)
                     },

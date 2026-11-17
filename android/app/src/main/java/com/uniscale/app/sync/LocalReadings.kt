@@ -7,7 +7,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 
 /**
@@ -32,13 +31,6 @@ class LocalReadings(context: Context) {
 
     @Synchronized
     fun add(b: BloodPressureData) = save(weights(), bloodPressures().plus(b).newest { it.timestamp })
-
-    /** Drops today's readings (local time). */
-    @Synchronized
-    fun clearToday(zone: ZoneId = ZoneId.systemDefault()) {
-        val start = LocalDate.now(zone).atStartOfDay(zone).toInstant()
-        save(weights().filter { it.timestamp < start }, bloodPressures().filter { it.timestamp < start })
-    }
 
     private fun <T> List<T>.newest(time: (T) -> Instant): List<T> {
         val cutoff = Instant.now().minus(java.time.Duration.ofDays(MAX_AGE_DAYS))
