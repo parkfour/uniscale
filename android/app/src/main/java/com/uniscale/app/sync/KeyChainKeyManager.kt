@@ -39,7 +39,9 @@ class KeyChainKeyManager(
     }
 
     companion object {
-        fun createOkHttpClient(context: Context, certAlias: String?): OkHttpClient {
+        /** The client, and whether it carries the certificate (false when the alias is blank or the key isn't readable). */
+        fun createOkHttpClient(context: Context, certAlias: String?): Pair<OkHttpClient, Boolean> {
+            var hasCert = false
             val builder = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(15, TimeUnit.SECONDS)
@@ -60,6 +62,7 @@ class KeyChainKeyManager(
                         sslContext.init(arrayOf(keyManager), trustManagers, SecureRandom())
 
                         builder.sslSocketFactory(sslContext.socketFactory, x509TrustManager)
+                        hasCert = true
                         Log.i("KeyChainKeyManager", "Configured client-certificate OkHttpClient")
                     } else {
                         Log.w("KeyChainKeyManager", "Certificate or private key not found for the selected alias")
@@ -69,7 +72,7 @@ class KeyChainKeyManager(
                 }
             }
 
-            return builder.build()
+            return builder.build() to hasCert
         }
     }
 }

@@ -71,9 +71,13 @@ class HubSyncManager(
         if (cachedClient != null && cachedAlias == effectiveAlias) {
             return cachedClient!!
         }
-        val newClient = KeyChainKeyManager.createOkHttpClient(context, effectiveAlias)
-        cachedClient = newClient
-        cachedAlias = effectiveAlias
+        val (newClient, hasCert) = KeyChainKeyManager.createOkHttpClient(context, effectiveAlias)
+        // A client built before the app was allowed to use the certificate has none: don't keep it,
+        // so the next request (e.g. after picking the certificate) tries the key again.
+        if (hasCert || effectiveAlias.isNullOrBlank()) {
+            cachedClient = newClient
+            cachedAlias = effectiveAlias
+        }
         return newClient
     }
 
