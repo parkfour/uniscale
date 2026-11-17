@@ -275,27 +275,8 @@ class MainActivity : ComponentActivity() {
         }
         lifecycleScope.launch {
             val places = hubSyncManager.fetchPlaces(date = "all")
-            if (places.isNotEmpty()) {
-                dwellPlaces.value = places
-                // For any dwell places with no candidate POIs yet, query in background
-                places.filter { !it.isDeleted && it.candidatePois.isEmpty() && (it.avgLat != 0.0 || it.avgLon != 0.0) }.forEach { pl ->
-                    launch {
-                        val candidates = PoiLookupService.queryPointsOfInterest(
-                            pl.avgLat,
-                            pl.avgLon,
-                            pl.confidenceRange,
-                            configManager.config.value.googleMapsApiKey
-                        )
-                        if (candidates.isNotEmpty()) {
-                            val candidateNames = candidates.map { it.name }
-                            dwellPlaces.value = dwellPlaces.value.map {
-                                if (it.id == pl.id) it.copy(candidatePois = candidateNames) else it
-                            }
-                            hubSyncManager.updatePlace(pl.id, candidatePois = candidateNames)
-                        }
-                    }
-                }
-            }
+            // Name suggestions are looked up on request only (the POI button), not for every place on each open.
+            if (places.isNotEmpty()) dwellPlaces.value = places
         }
     }
 
