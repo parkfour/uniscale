@@ -3,7 +3,6 @@ package com.uniscale.app.sync
 import android.util.Log
 import com.uniscale.app.config.AppConfigManager
 import com.uniscale.app.model.BloodPressureData
-import com.uniscale.app.model.CounterDailyRecord
 import com.uniscale.app.model.CounterState
 import com.uniscale.app.model.DwellPlace
 import com.uniscale.app.model.EcgData
@@ -372,35 +371,10 @@ class HubSyncManager(
         }
     }
 
-    private fun parseCounterState(json: JSONObject): CounterState {
-        val historyArr = json.optJSONArray("daily_history")
-        val daily = mutableListOf<CounterDailyRecord>()
-        if (historyArr != null) {
-            for (i in 0 until historyArr.length()) {
-                val item = historyArr.optJSONObject(i) ?: continue
-                daily.add(
-                    CounterDailyRecord(
-                        date = item.optString("date", ""),
-                        dOut = item.optInt("d_out", 0),
-                        dIn = item.optInt("d_in", 0)
-                    )
-                )
-            }
-        }
-        return CounterState(
-            dOut = json.optInt("d_out", 0),
-            dIn = json.optInt("d_in", 0),
-            totalDOut = json.optInt("total_d_out", 0),
-            totalDIn = json.optInt("total_d_in", 0),
-            date = json.optString("date", ""),
-            dailyHistory = daily
-        )
-    }
-
     suspend fun fetchCounter(date: String? = null): CounterState? {
         val path = "/api/counter" + if (date != null) "?date=$date" else ""
         val json = request(path) ?: return null
-        return parseCounterState(json)
+        return CounterState.fromJson(json)
     }
 
     suspend fun adjustCounter(item: String, delta: Int, date: String? = null): CounterState? {
@@ -410,7 +384,7 @@ class HubSyncManager(
             if (date != null) put("date", date)
         }
         val json = request("/api/counter", body) ?: return null
-        return parseCounterState(json)
+        return CounterState.fromJson(json)
     }
 
     suspend fun fetchPlaces(day: String = "previous", date: String? = null): List<DwellPlace> {

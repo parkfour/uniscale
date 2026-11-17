@@ -227,7 +227,7 @@ fun DashboardScreen(
                 }
             }
 
-            // D Tracker | Dwell Places (>1 hr)
+            // Counter (from the hub profile) | Dwell Places (>1 hr)
             item {
                 TileRow(
                     Tile.COUNTER, Tile.PLACES, expandedBottom, { expandedBottom = if (expandedBottom == it) null else it },
@@ -236,14 +236,7 @@ fun DashboardScreen(
                     },
                     full = { t, m ->
                         if (t == Tile.COUNTER) {
-                            CounterFull(
-                                counter = counter,
-                                onIncDOut = { onAdjustCounter("d_out", 1) },
-                                onDecDOut = { onAdjustCounter("d_out", -1) },
-                                onIncDIn = { onAdjustCounter("d_in", 1) },
-                                onDecDIn = { onAdjustCounter("d_in", -1) },
-                                modifier = m
-                            )
+                            CounterFull(counter = counter, onAdjust = onAdjustCounter, modifier = m)
                         } else {
                             PlacesFull(
                                 places = dwellPlaces,

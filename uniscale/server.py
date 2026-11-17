@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uniscale.config import ProfileConfig, UniscaleConfig, current_user, load_config, load_profile, normalize_user, save_profile, vault_db_path
 from uniscale.models import (
     ActivityWorkout,
@@ -162,11 +162,11 @@ class RawDnaUploadRequest(BaseModel):
 
 
 class CounterAdjustRequest(BaseModel):
+    """Either item (+ delta, default 1) to tap one counter, or counts to set the day's values."""
     item: Optional[str] = None
-    delta: Optional[int] = 1
-    d_out: Optional[int] = None
-    d_in: Optional[int] = None
-    date: Optional[str] = None
+    delta: int = 1
+    counts: Optional[Dict[str, int]] = None
+    date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     timestamp: Optional[str] = None
 
 
@@ -641,11 +641,14 @@ def get_counter(date: Optional[str] = None):
 @app.post("/api/counter")
 def post_counter(req: CounterAdjustRequest):
     from uniscale.counter import adjust_counter, set_counter
-    if req.d_out is not None or req.d_in is not None:
-        return set_counter(d_out=req.d_out, d_in=req.d_in, db_path=get_db_path(), target_date=req.date)
-    item = req.item or "d_out"
-    delta = req.delta if req.delta is not None else 1
-    return adjust_counter(item=item, delta=delta, db_path=get_db_path(), target_date=req.date, timestamp=req.timestamp)
+    try:
+        if req.counts is not None:
+            return set_counter(req.counts, db_path=get_db_path(), target_date=req.date)
+        if not req.item:
+            raise ValueError("Give item (to tap one counter) or counts (to set the day)")
+        return adjust_counter(item=req.item, delta=req.delta, db_path=get_db_path(), target_date=req.date, timestamp=req.timestamp)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @app.get("/api/counter/history")
@@ -1399,6 +1402,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <label style="display: flex; gap: 8px; align-items: center;"><input type="checkbox" id="profSmoker"> Current smoker</label>
                 <label style="display: flex; gap: 8px; align-items: center;"><input type="checkbox" id="profDiabetic"> Diabetic</label>
                 <label style="display: flex; gap: 8px; align-items: center;"><input type="checkbox" id="profBpTreated"> Taking blood-pressure medication</label>
+                <label for="profCounterTitle">Daily counter tile (leave blank for none)</label>
+                <input id="profCounterTitle" type="text" maxlength="40" placeholder="Title, e.g. D Tracker">
+                <input id="profCounterElements" type="text" placeholder="Buttons, comma-separated, e.g. D(out), D(in)" aria-label="Counter buttons, comma-separated">
                 <div class="import-status" role="status"></div>
                 <div class="import-actions">
                     <button type="button" class="ai-header-btn plain" onclick="this.closest('dialog').close()">Close</button>
@@ -1612,39 +1618,21 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <div class="metric-sub" style="margin-top: 8px;" id="gen-footer">100% Offline Sovereign DNA Screening</div>
             </div>
 
-            <!-- D(out) & D(in) Counter Tracker Card -->
-            <div class="card clickable" style="border-top: 3px solid #0ea5e9;" onclick="openCounterModal()">
+            <!-- Daily tap counter card: title and buttons come from the profile's counter set -->
+            <div class="card clickable" id="counter-card" style="border-top: 3px solid #0ea5e9; display: none;" onclick="openCounterModal()">
                 <div class="card-header">
                     <span class="card-title">
                         <span style="color: #0ea5e9; font-size: 18px;">●</span>
-                        D Tracker
+                        <span id="counter-title">Counter</span>
                     </span>
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span class="click-hint">Click for controls ↗</span>
                         <span class="badge" id="counter-badge" style="background: rgba(14, 165, 233, 0.15); color: #0ea5e9; border-color: rgba(14, 165, 233, 0.3);">Daily</span>
                     </div>
                 </div>
-                <div style="display: flex; justify-content: space-around; align-items: center; margin-top: 10px;">
-                    <div style="text-align: center;">
-                        <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 2px;">D(out)</div>
-                        <div class="metric-main" id="counter-dout-val" style="color: #38bdf8;">0</div>
-                        <div style="display: flex; gap: 6px; justify-content: center; margin-top: 6px;">
-                            <button class="ai-header-btn plain" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('d_out', -1)">-</button>
-                            <button class="ai-header-btn" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('d_out', 1)">+</button>
-                        </div>
-                    </div>
-                    <div style="width: 1px; height: 60px; background: var(--border);"></div>
-                    <div style="text-align: center;">
-                        <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 2px;">D(in)</div>
-                        <div class="metric-main" id="counter-din-val" style="color: #10b981;">0</div>
-                        <div style="display: flex; gap: 6px; justify-content: center; margin-top: 6px;">
-                            <button class="ai-header-btn plain" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('d_in', -1)">-</button>
-                            <button class="ai-header-btn" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('d_in', 1)">+</button>
-                        </div>
-                    </div>
-                </div>
+                <div id="counter-elements" style="display: flex; flex-wrap: wrap; justify-content: space-around; align-items: center; gap: 8px; margin-top: 10px;"></div>
                 <div id="counter-week" style="display: flex; gap: 6px; justify-content: space-between; margin-top: 12px;"></div>
-                <div class="metric-sub" style="margin-top: 12px; text-align: center;" id="counter-footer">D(out) / D(in) Daily Tracking • Syncs with Android</div>
+                <div class="metric-sub" style="margin-top: 12px; text-align: center;" id="counter-footer"></div>
             </div>
 
             <!-- Dwell Places (>1 hr Yesterday) Card -->
@@ -1974,19 +1962,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     }
                 }
 
-                // D(out) & D(in) Counter Tracker Card
-                if (data.counter) {
-                    const c = data.counter;
-                    const doutEl = document.getElementById('counter-dout-val');
-                    const dinEl = document.getElementById('counter-din-val');
-                    if (doutEl) doutEl.innerText = c.d_out ?? 0;
-                    if (dinEl) dinEl.innerText = c.d_in ?? 0;
-                    const badge = document.getElementById('counter-badge');
-                    if (badge) badge.innerText = `Today (${c.date || 'Active'})`;
-                    const footer = document.getElementById('counter-footer');
-                    if (footer) footer.innerText = `Total: D(out) ${c.total_d_out || 0} • D(in) ${c.total_d_in || 0}`;
-                    renderCounterWeek(c.daily_history || []);
-                }
+                // Daily tap counter card (hidden when the profile has no counter set)
+                if (data.counter) renderCounterCard(data.counter);
 
                 // Dwell Places Card
                 if (data.places) {
@@ -2077,8 +2054,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         origin = 'Protocol Log';
                     } else if (r.type === 'counter') {
                         tagClass = 'tag-supp';
-                        typeName = 'D Tracker';
-                        val = `${r.date}: D(out) ${r.d_out ?? 0} • D(in) ${r.d_in ?? 0}`;
+                        typeName = r.title || 'Counter';
+                        val = `${r.date}: ${r.display_name || r.item} ${r.delta > 0 ? '+' : ''}${r.delta}`;
                         origin = 'Counter';
                     } else if (r.variants !== undefined || r.type === 'genomics') {
                         tagClass = 'tag-gen';
@@ -3867,85 +3844,81 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             }
         }
 
-        /* D Tracker & Places Modals */
-        async function adjustCounterWeb(item, delta) {
+        /* Counter & Places Modals */
+        const COUNTER_COLORS = ['#38bdf8', '#10b981', '#f59e0b', '#a78bfa', '#f472b6', '#f87171', '#2dd4bf', '#facc15'];
+        const counterColor = i => COUNTER_COLORS[i % COUNTER_COLORS.length];
+        let counterState = null;  // last /api/counter response, escaped
+
+        async function fetchCounter() {
+            const res = await fetch('/api/counter');
+            return esc(await res.json());
+        }
+
+        function renderCounterCard(c) {
+            counterState = c;
+            const card = document.getElementById('counter-card');
+            const els = c.elements || [];
+            card.style.display = els.length ? '' : 'none';
+            if (!els.length) return;
+            document.getElementById('counter-title').innerHTML = c.title;
+            document.getElementById('counter-badge').innerText = `Today (${c.date})`;
+            document.getElementById('counter-elements').innerHTML = els.map((e, i) => `
+                <div style="text-align: center; min-width: 64px;">
+                    <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 2px;">${e.label}</div>
+                    <div class="metric-main" style="color: ${counterColor(i)};">${c.counts[e.key] ?? 0}</div>
+                    <div style="display: flex; gap: 6px; justify-content: center; margin-top: 6px;">
+                        <button class="ai-header-btn plain" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('${e.key}', -1)" aria-label="${e.label} minus one">-</button>
+                        <button class="ai-header-btn" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('${e.key}', 1)" aria-label="${e.label} plus one">+</button>
+                    </div>
+                </div>`).join('');
+            document.getElementById('counter-footer').innerHTML = 'All-time: ' + els.map(e => `${e.label} ${c.totals[e.key] ?? 0}`).join(' • ');
+            renderCounterWeek(c);
+        }
+
+        async function postCounter(body) {
+            const res = await fetch('/api/counter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const updated = esc(await res.json());
+            // The response is for the day posted; refetch so the card shows today.
+            const today = body.date ? await fetchCounter() : updated;
+            renderCounterCard(today);
+            if (currentModalType === 'counter') renderCounterModal(today);
+        }
+
+        async function adjustCounterWeb(item, delta, date) {
             try {
-                const res = await fetch('/api/counter', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ item, delta })
-                });
-                if (res.ok) {
-                    const updated = await res.json();
-                    const doutEl = document.getElementById('counter-dout-val');
-                    const dinEl = document.getElementById('counter-din-val');
-                    if (doutEl) doutEl.innerText = updated.d_out ?? 0;
-                    if (dinEl) dinEl.innerText = updated.d_in ?? 0;
-                    const footer = document.getElementById('counter-footer');
-                    if (footer) footer.innerText = `Total: D(out) ${updated.total_d_out || 0} • D(in) ${updated.total_d_in || 0}`;
-                    if (currentModalType === 'counter') {
-                        renderCounterModal(updated);
-                    }
-                }
+                await postCounter(date ? { item, delta, date } : { item, delta });
             } catch (e) {
                 console.error("Counter update failed", e);
             }
         }
 
-        function editPastRow(dateStr, dOut, dIn) {
-            const dateInput = document.getElementById('counter-past-date');
-            const dOutInput = document.getElementById('counter-past-dout');
-            const dInInput = document.getElementById('counter-past-din');
-            if (dateInput) dateInput.value = dateStr;
-            if (dOutInput) dOutInput.value = dOut;
-            if (dInInput) dInInput.value = dIn;
-            const container = document.getElementById('modalDeviceTelemetry');
-            if (container) container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-
-        async function quickAdjustPast(dateStr, item, delta) {
-            try {
-                const res = await fetch('/api/counter', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ date: dateStr, item, delta })
-                });
-                if (res.ok) {
-                    const res2 = await fetch('/api/counter');
-                    const updated = await res2.json();
-                    renderCounterModal(updated);
-                }
-            } catch (e) {
-                console.error("quickAdjustPast failed", e);
-            }
+        function editPastRow(dateStr) {
+            const row = (counterState?.daily_history || []).find(d => d.date === dateStr);
+            document.getElementById('counter-past-date').value = dateStr;
+            (counterState?.elements || []).forEach(e => {
+                const input = document.getElementById(`counter-past-${e.key}`);
+                if (input) input.value = row ? (row.counts[e.key] ?? 0) : 0;
+            });
+            document.getElementById('modalDeviceTelemetry')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
         async function savePastCounterWeb() {
-            const dateStr = document.getElementById('counter-past-date')?.value;
-            const dOut = parseInt(document.getElementById('counter-past-dout')?.value || '0', 10);
-            const dIn = parseInt(document.getElementById('counter-past-din')?.value || '0', 10);
-            if (!dateStr) return;
+            const date = document.getElementById('counter-past-date')?.value;
+            if (!date) return;
+            const counts = Object.fromEntries((counterState?.elements || []).map(e =>
+                [e.key, parseInt(document.getElementById(`counter-past-${e.key}`)?.value || '0', 10) || 0]));
             try {
-                const res = await fetch('/api/counter', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ date: dateStr, d_out: dOut, d_in: dIn })
-                });
-                if (res.ok) {
-                    const res2 = await fetch('/api/counter');
-                    const updated = await res2.json();
-                    renderCounterModal(updated);
-                }
+                await postCounter({ date, counts });
             } catch (e) {
                 console.error("savePastCounterWeb failed", e);
             }
         }
 
-        // Last 7 days on the card: out/in per day, oldest left, days with no entry show "–"
-        function renderCounterWeek(daily) {
+        // Last 7 days on the card: one row per counter, oldest left, days with no entry show "–"
+        function renderCounterWeek(c) {
             const el = document.getElementById('counter-week');
-            if (!el) return;
-            const byDate = Object.fromEntries(daily.map(d => [d.date, d]));
+            const byDate = Object.fromEntries((c.daily_history || []).map(d => [d.date, d]));
             const cells = [];
             for (let i = 6; i >= 0; i--) {
                 const d = new Date(); d.setDate(d.getDate() - i);
@@ -3954,8 +3927,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 const label = d.toLocaleDateString(undefined, { weekday: 'narrow' });
                 cells.push(`<div style="flex: 1; text-align: center; font-size: 11px; line-height: 1.4;">
                     <div style="color: var(--text-muted);">${label}</div>
-                    <div style="color: #38bdf8; font-weight: 600;">${r ? r.d_out : '–'}</div>
-                    <div style="color: #10b981; font-weight: 600;">${r ? r.d_in : '–'}</div>
+                    ${c.elements.map((e, j) => `<div style="color: ${counterColor(j)}; font-weight: 600;">${r ? (r.counts[e.key] ?? 0) : '–'}</div>`).join('')}
                 </div>`);
             }
             el.innerHTML = cells.join('');
@@ -3964,79 +3936,58 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         async function openCounterModal() {
             currentModalType = 'counter';
             openModal();
-            document.getElementById('modalTitle').innerText = 'D Tracker';
-            document.getElementById('modalSubtitle').innerText = 'Daily counts and 30-day history for D(out) and D(in)';
+            document.getElementById('modalTitle').innerHTML = counterState?.title || 'Counter';
+            document.getElementById('modalSubtitle').innerText = 'Daily counts and 30-day history';
             document.getElementById('modalFilterRow').style.display = 'none';
             document.getElementById('modalChartCard').style.display = 'block';
             document.getElementById('modalDeviceTelemetry').style.display = 'block';
-
             try {
-                const res = await fetch('/api/counter');
-                const data = await res.json();
-                renderCounterModal(data);
+                const c = await fetchCounter();
+                renderCounterCard(c);
+                renderCounterModal(c);
             } catch (e) {
                 console.error("Failed to load counter", e);
             }
         }
 
         function renderCounterModal(data) {
-            const stats = document.getElementById('modalStatsGrid');
+            const els = data.elements || [];
             const daily = data.daily_history || [];
-
             const past7 = daily.slice(0, 7);
-            const sumOut7 = past7.reduce((acc, d) => acc + (d.d_out || 0), 0);
-            const sumIn7 = past7.reduce((acc, d) => acc + (d.d_in || 0), 0);
-            const avgOut7 = past7.length ? (sumOut7 / past7.length).toFixed(1) : "0.0";
-            const avgIn7 = past7.length ? (sumIn7 / past7.length).toFixed(1) : "0.0";
+            const avg7 = k => past7.length ? (past7.reduce((acc, d) => acc + (d.counts[k] || 0), 0) / past7.length).toFixed(1) : '0.0';
 
-            stats.innerHTML = `
+            document.getElementById('modalStatsGrid').innerHTML = els.map((e, i) => `
                 <div class="stat-card">
-                    <div class="stat-label">Today D(out)</div>
-                    <div class="stat-value" style="color: #38bdf8;">${data.d_out}</div>
+                    <div class="stat-label">Today ${e.label}</div>
+                    <div class="stat-value" style="color: ${counterColor(i)};">${data.counts[e.key] ?? 0}</div>
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        <button class="ai-header-btn plain" onclick="adjustCounterWeb('d_out', -1)">- 1</button>
-                        <button class="ai-header-btn" onclick="adjustCounterWeb('d_out', 1)">+ 1</button>
+                        <button class="ai-header-btn plain" onclick="adjustCounterWeb('${e.key}', -1)">- 1</button>
+                        <button class="ai-header-btn" onclick="adjustCounterWeb('${e.key}', 1)">+ 1</button>
                     </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Today D(in)</div>
-                    <div class="stat-value" style="color: #10b981;">${data.d_in}</div>
-                    <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        <button class="ai-header-btn plain" onclick="adjustCounterWeb('d_in', -1)">- 1</button>
-                        <button class="ai-header-btn" onclick="adjustCounterWeb('d_in', 1)">+ 1</button>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">7-Day Avg (Out / In)</div>
-                    <div class="stat-value" style="font-size: 20px;"><span style="color:#38bdf8;">${avgOut7}</span> / <span style="color:#10b981;">${avgIn7}</span></div>
-                    <div class="stat-sub">Past 7 days daily avg</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">All-time (Out / In)</div>
-                    <div class="stat-value" style="font-size: 20px;">${data.total_d_out} / ${data.total_d_in}</div>
-                    <div class="stat-sub">Lifetime totals</div>
-                </div>
-            `;
+                    <div class="stat-sub">7-day avg ${avg7(e.key)} • all-time ${data.totals[e.key] ?? 0}</div>
+                </div>`).join('');
 
-            // Draw time-series trend chart
+            // Two counters chart side by side; otherwise the daily total.
             if (daily.length > 0) {
-                const chartPoints = daily.slice().reverse().map(d => ({
-                    time: new Date(d.date + "T12:00:00Z"),
-                    val1: d.d_out,
-                    val2: d.d_in
-                }));
-                document.getElementById('chartLegend').innerHTML = `
-                    <div class="legend-item"><div class="legend-dot" style="background: #38bdf8;"></div> D(out)</div>
-                    <div class="legend-item"><div class="legend-dot" style="background: #10b981;"></div> D(in)</div>`;
-                drawTimeSeriesChart(chartPoints, '#38bdf8', '#10b981', 'D(out)', 'D(in)');
+                const two = els.length === 2;
+                const points = daily.slice().reverse().map(d => {
+                    const p = { time: new Date(d.date + "T12:00:00Z"), val1: two ? (d.counts[els[0].key] || 0) : d.total };
+                    if (two) p.val2 = d.counts[els[1].key] || 0;
+                    return p;
+                });
+                const series = two ? [[els[0].label, counterColor(0)], [els[1].label, counterColor(1)]] : [['Total', counterColor(0)]];
+                document.getElementById('chartLegend').innerHTML = series.map(([l, col]) =>
+                    `<div class="legend-item"><div class="legend-dot" style="background: ${col};"></div> ${l}</div>`).join('');
+                drawTimeSeriesChart(points, counterColor(0), counterColor(1), series[0][0], two ? series[1][0] : '');
             } else {
-                drawEmptyChart("No historic counter data available");
+                drawEmptyChart("No counter history yet");
             }
 
             // Past day entry bar
             const yDate = new Date();
             yDate.setDate(yDate.getDate() - 1);
             const yesterdayStr = yDate.toISOString().substring(0, 10);
+            const inputStyle = 'width: 55px; background: var(--surface-1, #1e293b); border: 1px solid var(--border, #334155); color: #f8fafc; border-radius: 6px; padding: 4px 6px; font-size: 13px; text-align: center;';
             const container = document.getElementById('modalDeviceTelemetry');
             container.style.display = 'block';
             container.innerHTML = `
@@ -4044,59 +3995,41 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <span style="font-size: 13px; font-weight: 600; color: #38bdf8;">📅 Log / Edit Past Day:</span>
                         <input type="date" id="counter-past-date" value="${yesterdayStr}" style="background: var(--surface-1, #1e293b); border: 1px solid var(--border, #334155); color: #f8fafc; border-radius: 6px; padding: 4px 8px; font-size: 13px;">
+                        ${els.map((e, i) => `
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <label style="font-size: 12px; color: #38bdf8; font-weight: bold;">D(out):</label>
-                            <input type="number" id="counter-past-dout" min="0" value="0" style="width: 55px; background: var(--surface-1, #1e293b); border: 1px solid var(--border, #334155); color: #f8fafc; border-radius: 6px; padding: 4px 6px; font-size: 13px; text-align: center;">
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <label style="font-size: 12px; color: #10b981; font-weight: bold;">D(in):</label>
-                            <input type="number" id="counter-past-din" min="0" value="0" style="width: 55px; background: var(--surface-1, #1e293b); border: 1px solid var(--border, #334155); color: #f8fafc; border-radius: 6px; padding: 4px 6px; font-size: 13px; text-align: center;">
-                        </div>
+                            <label for="counter-past-${e.key}" style="font-size: 12px; color: ${counterColor(i)}; font-weight: bold;">${e.label}:</label>
+                            <input type="number" id="counter-past-${e.key}" min="0" value="0" style="${inputStyle}">
+                        </div>`).join('')}
                     </div>
                     <button class="ai-header-btn" style="font-size: 12px; padding: 6px 14px;" onclick="savePastCounterWeb()">Save Count</button>
                 </div>
             `;
 
-            document.getElementById('modalTableTitle').innerHTML = `
-                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                    <span>Daily History (Past 30 Days)</span>
-                </div>
-            `;
-
+            document.getElementById('modalTableTitle').innerHTML = `<span>Daily History (Past 30 Days)</span>`;
             document.getElementById('modalTableHead').innerHTML = `
                 <tr>
                     <th>Date</th>
-                    <th style="color: #38bdf8;">D(out)</th>
-                    <th style="color: #10b981;">D(in)</th>
-                    <th>Daily Total</th>
+                    ${els.map((e, i) => `<th style="color: ${counterColor(i)};">${e.label}</th>`).join('')}
+                    <th>Total</th>
                     <th style="text-align: right;">Adjust</th>
                 </tr>
             `;
 
             const tbody = document.getElementById('modalTableBody');
-            tbody.innerHTML = '';
             if (daily.length === 0) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td colspan="5" style="text-align: center; color: var(--text-muted); padding: 16px;">No daily history recorded yet. Use + on the card, the app, or Log / Edit Past Day above.</td>`;
-                tbody.appendChild(tr);
-            } else {
-                daily.forEach(d => {
-                    const total = (d.d_out || 0) + (d.d_in || 0);
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td><strong>${d.date}</strong></td>
-                        <td style="color: #38bdf8; font-weight: 600;">${d.d_out}</td>
-                        <td style="color: #10b981; font-weight: 600;">${d.d_in}</td>
-                        <td style="font-weight: 600;">${total}</td>
-                        <td style="text-align: right; white-space: nowrap;">
-                            <button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 7px; margin-right: 4px;" onclick="quickAdjustPast('${d.date}', 'd_out', 1)" title="Add 1 to D(out)">+Out</button>
-                            <button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 7px; margin-right: 4px;" onclick="quickAdjustPast('${d.date}', 'd_in', 1)" title="Add 1 to D(in)">+In</button>
-                            <button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 8px;" onclick="editPastRow('${d.date}', ${d.d_out}, ${d.d_in})">Edit</button>
-                        </td>
-                    `;
-                    tbody.appendChild(tr);
-                });
+                tbody.innerHTML = `<tr><td colspan="${els.length + 3}" style="text-align: center; color: var(--text-muted); padding: 16px;">No daily history recorded yet. Use + on the card, the app, or Log / Edit Past Day above.</td></tr>`;
+                return;
             }
+            tbody.innerHTML = daily.map(d => `
+                <tr>
+                    <td><strong>${d.date}</strong></td>
+                    ${els.map((e, i) => `<td style="color: ${counterColor(i)}; font-weight: 600;">${d.counts[e.key] ?? 0}</td>`).join('')}
+                    <td style="font-weight: 600;">${d.total}</td>
+                    <td style="text-align: right; white-space: nowrap;">
+                        ${els.map(e => `<button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 7px; margin-right: 4px;" onclick="adjustCounterWeb('${e.key}', 1, '${d.date}')" title="Add 1 to ${e.label}">+${e.label}</button>`).join('')}
+                        <button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 8px;" onclick="editPastRow('${d.date}')">Edit</button>
+                    </td>
+                </tr>`).join('');
         }
 
         async function addManualPlaceWeb() {
@@ -4850,11 +4783,20 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 document.getElementById('profSmoker').checked = !!p.smoker;
                 document.getElementById('profDiabetic').checked = !!p.diabetic;
                 document.getElementById('profBpTreated').checked = !!p.bp_treated;
+                document.getElementById('profCounterTitle').value = p.counter?.title ?? '';
+                document.getElementById('profCounterElements').value = (p.counter?.elements ?? []).join(', ');
             } catch (err) {
                 st.classList.add('err');
                 st.textContent = 'Could not load profile: ' + err.message;
             }
             dlg.showModal();
+        }
+
+        // The counter set from the profile form: null (no tile) when the title or buttons are blank.
+        function profileCounter() {
+            const title = document.getElementById('profCounterTitle').value.trim();
+            const elements = document.getElementById('profCounterElements').value.split(',').map(e => e.trim()).filter(Boolean);
+            return title && elements.length ? { title, elements } : null;
         }
 
         async function saveProfile(event) {
@@ -4869,6 +4811,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 smoker: document.getElementById('profSmoker').checked,
                 diabetic: document.getElementById('profDiabetic').checked,
                 bp_treated: document.getElementById('profBpTreated').checked,
+                counter: profileCounter(),
             };
             st.className = 'import-status';
             try {
@@ -4877,6 +4820,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || res.status));
                 st.classList.add('ok');
                 st.textContent = 'Saved. Biological age and ASCVD risk are recalculated.';
+                fetchCounter().then(renderCounterCard).catch(() => {});
                 showProfileName(data.name);
                 loadSummary();
             } catch (err) {

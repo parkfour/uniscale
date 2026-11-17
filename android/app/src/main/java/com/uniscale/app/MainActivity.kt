@@ -282,9 +282,8 @@ class MainActivity : ComponentActivity() {
 
     private fun adjustCounter(item: String, delta: Int) {
         val cur = counterState.value
-        val newOut = if (item == "d_out") (cur.dOut + delta).coerceAtLeast(0) else cur.dOut
-        val newIn = if (item == "d_in") (cur.dIn + delta).coerceAtLeast(0) else cur.dIn
-        counterState.value = cur.copy(dOut = newOut, dIn = newIn)
+        val n = ((cur.counts[item] ?: 0) + delta).coerceAtLeast(0)
+        counterState.value = cur.copy(counts = cur.counts + (item to n))  // shown at once; the hub's answer replaces it
         lifecycleScope.launch {
             val updated = hubSyncManager.adjustCounter(item, delta)
             if (updated != null) {

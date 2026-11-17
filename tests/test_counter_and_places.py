@@ -24,34 +24,63 @@ def temp_vault():
         yield vault
 
 
+def _profile_counter(vault, title="D Tracker", elements=("D(out)", "D(in)")):
+    with open(os.path.join(os.path.dirname(vault), "profile.json"), "w") as f:
+        json.dump({"counter": {"title": title, "elements": list(elements)}}, f)
+
+
+def test_counter_without_a_profile_counter_has_no_elements(temp_vault):
+    state = get_counter_state(temp_vault, target_date="2026-11-14")
+    assert state["title"] is None and state["elements"] == [] and state["counts"] == {}
+    with pytest.raises(ValueError):
+        adjust_counter("d_out", 1, db_path=temp_vault)
+
+
+def test_counter_elements_come_from_the_profile(temp_vault):
+    _profile_counter(temp_vault, "Swearing", ["F", "S", "C", "P"])
+    s = adjust_counter("F", 2, db_path=temp_vault, target_date="2026-11-14")
+    s = adjust_counter("p", 1, db_path=temp_vault, target_date="2026-11-14")
+    assert s["title"] == "Swearing"
+    assert [e["key"] for e in s["elements"]] == ["f", "s", "c", "p"]
+    assert s["counts"] == {"f": 2, "s": 0, "c": 0, "p": 1}
+    assert s["daily_history"][0]["total"] == 3
+    with pytest.raises(ValueError):
+        adjust_counter("d_out", 1, db_path=temp_vault)
+
+
+def test_counter_set_rejects_duplicate_or_empty_elements():
+    from pydantic import ValidationError
+    from uniscale.config import CounterSet
+    with pytest.raises(ValidationError):
+        CounterSet(title="X", elements=["a b", "A-B"])
+    with pytest.raises(ValidationError):
+        CounterSet(title="X", elements=["()"])
+    with pytest.raises(ValidationError):
+        CounterSet(title="X", elements=[])
+
+
 def test_counter_adjust_and_get(temp_vault):
+    _profile_counter(temp_vault)
     state0 = get_counter_state(temp_vault, target_date="2026-11-14")
-    assert state0["d_out"] == 0
-    assert state0["d_in"] == 0
+    assert state0["counts"] == {"d_out": 0, "d_in": 0}
 
-    # Increment D(out)
-    s1 = adjust_counter("d_out", 1, db_path=temp_vault, target_date="2026-11-14")
-    assert s1["d_out"] == 1
-    assert s1["d_in"] == 0
-    assert s1["total_d_out"] == 1
+    s1 = adjust_counter("D(out)", 1, db_path=temp_vault, target_date="2026-11-14")
+    assert s1["counts"] == {"d_out": 1, "d_in": 0}
+    assert s1["totals"]["d_out"] == 1
 
-    # Increment D(in)
     s2 = adjust_counter("d_in", 2, db_path=temp_vault, target_date="2026-11-14")
-    assert s2["d_out"] == 1
-    assert s2["d_in"] == 2
+    assert s2["counts"] == {"d_out": 1, "d_in": 2}
 
-    # Decrement D(out)
     s3 = adjust_counter("d_out", -1, db_path=temp_vault, target_date="2026-11-14")
-    assert s3["d_out"] == 0
+    assert s3["counts"]["d_out"] == 0
 
-    # Decrement past zero clamp
+    # Never below zero
     s4 = adjust_counter("d_out", -5, db_path=temp_vault, target_date="2026-11-14")
-    assert s4["d_out"] == 0
+    assert s4["counts"]["d_out"] == 0
 
-    # Explicit set
-    s5 = set_counter(d_out=10, d_in=5, db_path=temp_vault, target_date="2026-11-14")
-    assert s5["d_out"] == 10
-    assert s5["d_in"] == 5
+    s5 = set_counter({"D(out)": 10, "d_in": 5}, db_path=temp_vault, target_date="2026-11-14")
+    assert s5["counts"] == {"d_out": 10, "d_in": 5}
+    assert s5["daily_history"][0] | {"updated_at": None} == {"date": "2026-11-14", "counts": {"d_out": 10, "d_in": 5}, "total": 15, "updated_at": None}
 
 
 def test_places_haversine():
@@ -126,23 +155,24 @@ def test_places_dwell_clustering(temp_vault):
 
 def test_api_counter_and_places_endpoints(monkeypatch, temp_vault):
     monkeypatch.setenv("UNISCALE_DB_PATH", temp_vault)
+    _profile_counter(temp_vault)
     client = TestClient(app)
 
-    # 1. GET /api/counter
     resp = client.get("/api/counter")
     assert resp.status_code == 200
-    data = resp.json()
-    assert "d_out" in data and "d_in" in data
+    assert resp.json()["title"] == "D Tracker"
+    assert resp.json()["elements"] == [{"key": "d_out", "label": "D(out)"}, {"key": "d_in", "label": "D(in)"}]
 
-    # 2. POST /api/counter adjust D(out)
-    resp2 = client.post("/api/counter", json={"item": "d_out", "delta": 3})
-    assert resp2.status_code == 200
-    assert resp2.json()["d_out"] == 3
+    assert client.post("/api/counter", json={"item": "d_out", "delta": 3}).json()["counts"]["d_out"] == 3
+    assert client.post("/api/counter", json={"item": "D(in)"}).json()["counts"]["d_in"] == 1
+    assert client.post("/api/counter", json={"item": "nope"}).status_code == 422
+    assert client.post("/api/counter", json={"counts": {"d_in": 4}, "date": "not-a-date"}).status_code == 422
+    assert client.post("/api/counter", json={"counts": {"d_in": 4}, "date": "2026-11-01"}).json()["date"] == "2026-11-01"
 
-    # 3. POST /api/counter adjust D(in)
-    resp3 = client.post("/api/counter", json={"item": "d_in", "delta": 1})
-    assert resp3.status_code == 200
-    assert resp3.json()["d_in"] == 1
+    # The profile's counter round-trips through the profile API
+    prof = client.get("/api/profile").json()
+    assert prof["counter"] == {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}
+    assert client.put("/api/profile", json=prof | {"counter": {"title": "T", "elements": ["a", "A"]}}).status_code == 422
 
     # 4. POST /api/owntracks webhook
     owntracks_msg = {
@@ -167,44 +197,25 @@ def test_api_counter_and_places_endpoints(monkeypatch, temp_vault):
     sum_data = resp_sum.json()
     assert "counter" in sum_data
     assert "places" in sum_data
-    assert sum_data["counter"]["d_out"] == 3
-    assert sum_data["counter"]["d_in"] == 1
+    assert sum_data["counter"]["counts"] == {"d_out": 3, "d_in": 1}
 
 
-def test_counter_daily_history_and_seed(temp_vault):
-    from uniscale.counter import get_daily_history, seed_historic_data, import_historic_records
-
-    # Initially empty history
-    h0 = get_daily_history(temp_vault)
-    assert len(h0) == 0
-
-    # Seed 30 days
-    seeded = seed_historic_data(days=30, db_path=temp_vault)
-    assert len(seeded) == 30
-
-    h1 = get_daily_history(temp_vault, days=30)
-    assert len(h1) == 30
-    assert h1[0]["d_out"] > 0
-    assert h1[0]["d_in"] > 0
-    # Check sorted descending
-    assert h1[0]["date"] > h1[-1]["date"]
-
-    # Import explicit historical record
-    import_count = import_historic_records([
-        {"date": "2026-01-01", "d_out": 7, "d_in": 3}
+def test_counter_import_history(temp_vault):
+    from uniscale.counter import get_daily_history, import_historic_records
+    _profile_counter(temp_vault)
+    assert get_daily_history(temp_vault) == []
+    n = import_historic_records([
+        {"date": "2026-01-01", "d_out": 7, "d_in": 3},
+        {"date": "2026-01-02", "counts": {"D(out)": 1}, "other": 9},
     ], db_path=temp_vault)
-    assert import_count == 1
-
-    h2 = get_daily_history(temp_vault, days=50)
-    dates = [x["date"] for x in h2]
-    assert "2026-01-01" in dates
-    rec_jan1 = next(x for x in h2 if x["date"] == "2026-01-01")
-    assert rec_jan1["d_out"] == 7
-    assert rec_jan1["d_in"] == 3
+    assert n == 2
+    h = get_daily_history(temp_vault, days=50)
+    assert [(x["date"], x["counts"]) for x in h] == [("2026-01-02", {"d_out": 1, "d_in": 0}), ("2026-01-01", {"d_out": 7, "d_in": 3})]
 
 
 def test_counter_history_api(temp_vault, monkeypatch):
     monkeypatch.setenv("UNISCALE_DB_PATH", temp_vault)
+    _profile_counter(temp_vault)
     client = TestClient(app)
 
     # 1. POST /api/counter/history import of 14 days
@@ -433,3 +444,15 @@ def test_places_map_local_zoom_in_html():
     assert "Local Zoom" in resp.text
     assert "setPlacesMapMode" in resp.text
     assert "_placesMapMode" in resp.text
+
+
+def test_cli_profile_sets_and_clears_the_counter(temp_vault, monkeypatch, capsys):
+    from uniscale import cli
+    from uniscale.config import load_profile
+    monkeypatch.setenv("UNISCALE_DB_PATH", temp_vault)
+    monkeypatch.setattr("sys.argv", ["uniscale", "profile", "--counter", "Swearing: F, S, C, P"])
+    cli.main()
+    assert load_profile(temp_vault).counter.elements == ["F", "S", "C", "P"]
+    monkeypatch.setattr("sys.argv", ["uniscale", "profile", "--counter", ""])
+    cli.main()
+    assert load_profile(temp_vault).counter is None

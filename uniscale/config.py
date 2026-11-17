@@ -117,6 +117,35 @@ class AiConfig(BaseModel):
         return self.enabled if self.enabled is not None else "endpoint" in self.model_fields_set
 
 
+def element_key(label: str) -> str:
+    """Storage key for a counter element: "D(out)" -> "d_out", "F" -> "f"."""
+    return re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
+
+
+class CounterSet(BaseModel):
+    """A daily tap counter tile: {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}."""
+    title: str = Field(min_length=1, max_length=40)
+    elements: List[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("title")
+    @classmethod
+    def _strip_title(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("title must not be blank")
+        return v.strip()
+
+    @field_validator("elements")
+    @classmethod
+    def _distinct_elements(cls, v: List[str]) -> List[str]:
+        labels = [e.strip() for e in v]
+        keys = [element_key(e) for e in labels]
+        if any(not k or len(e) > 20 for k, e in zip(keys, labels)):
+            raise ValueError("each element needs a letter or digit and at most 20 characters")
+        if len(set(keys)) != len(keys):
+            raise ValueError("elements must be distinct")
+        return labels
+
+
 class ProfileConfig(BaseModel):
     """
     Per-person inputs for PhenoAge and the ACC/AHA pooled-cohort ASCVD equations.
@@ -129,6 +158,7 @@ class ProfileConfig(BaseModel):
     smoker: bool = False
     diabetic: bool = False
     bp_treated: bool = False  # taking blood-pressure medication
+    counter: Optional[CounterSet] = None  # the daily tap counter tile; none shown when unset
 
     @field_validator("name")
     @classmethod

@@ -103,72 +103,50 @@ def cmd_history(args):
 
 def cmd_counter(args):
     import json
-    from uniscale.counter import get_counter_state, get_daily_history, set_counter, adjust_counter, seed_historic_data, import_historic_records
+    from uniscale.counter import get_counter_state, get_daily_history, set_counter, adjust_counter, import_historic_records
     from uniscale.config import vault_db_path
 
     v_path = vault_db_path()
-
-    import_file = getattr(args, "import_file", None)
-    if import_file:
-        entries = []
-        if import_file.endswith(".json"):
-            with open(import_file, "r", encoding="utf-8") as f:
-                raw_json = json.load(f)
-                entries = raw_json if isinstance(raw_json, list) else raw_json.get("entries", [])
-        else:
-            import csv
-            with open(import_file, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    d = row.get("date") or row.get("Date")
-                    out_val = row.get("d_out") or row.get("out") or row.get("D(out)") or 0
-                    in_val = row.get("d_in") or row.get("in") or row.get("D(in)") or 0
-                    if d:
-                        entries.append({"date": str(d).strip(), "d_out": int(out_val), "d_in": int(in_val)})
-        count = import_historic_records(entries, db_path=v_path)
-        print(f"Imported {count} historical day records from {import_file}.")
-        return
-
-    if getattr(args, "seed", None):
-        days = args.seed
-        seeded = seed_historic_data(days=days, db_path=v_path)
-        print(f"Seeded {len(seeded)} historical days into counter vault.")
-        return
-
     target_date = getattr(args, "date", None)
 
-    if getattr(args, "out", None) is not None or getattr(args, "in_", None) is not None:
-        state = set_counter(d_out=args.out, d_in=args.in_, db_path=v_path, target_date=target_date)
-        print(f"Updated counter for {state['date']}: D(out)={state['d_out']}, D(in)={state['d_in']}")
+    if getattr(args, "import_file", None):
+        with open(args.import_file, "r", encoding="utf-8") as f:
+            if args.import_file.endswith(".json"):
+                raw_json = json.load(f)
+                entries = raw_json if isinstance(raw_json, list) else raw_json.get("entries", [])
+            else:
+                import csv
+                entries = [{k.strip(): (v or "0").strip() for k, v in row.items()} for row in csv.DictReader(f)]
+        count = import_historic_records(entries, db_path=v_path)
+        print(f"Imported {count} days from {args.import_file}.")
         return
 
-    if getattr(args, "inc", None):
+    if getattr(args, "set", None):
+        counts = {}
+        for pair in args.set:
+            name, _, n = pair.rpartition("=")
+            counts[name] = int(n)
+        state = set_counter(counts, db_path=v_path, target_date=target_date)
+    elif getattr(args, "inc", None):
         state = adjust_counter(item=args.inc, delta=1, db_path=v_path, target_date=target_date)
-        print(f"Incremented {args.inc} for {state['date']}: D(out)={state['d_out']}, D(in)={state['d_in']}")
-        return
-
-    if getattr(args, "dec", None):
+    elif getattr(args, "dec", None):
         state = adjust_counter(item=args.dec, delta=-1, db_path=v_path, target_date=target_date)
-        print(f"Decremented {args.dec} for {state['date']}: D(out)={state['d_out']}, D(in)={state['d_in']}")
-        return
+    else:
+        state = get_counter_state(v_path, target_date=target_date)
 
-    # Default: display history
+    els = state["elements"]
+    if not els:
+        print('No counter set. Add one to your profile, e.g. "counter": {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}')
+        return
     days = getattr(args, "history", 10) or 10
     history = get_daily_history(v_path, days=days)
-    state = get_counter_state(v_path, target_date=target_date)
-
-    print(f"\n--- D Tracker ---")
-    print(f"Today ({state['date']}): D(out) = {state['d_out']} | D(in) = {state['d_in']}")
-    print(f"All-time totals: D(out) = {state['total_d_out']} | D(in) = {state['total_d_in']}\n")
-    print(f"Past {len(history)} Days History:")
-    print(f"{'Date':<12} {'D(out)':<8} {'D(in)':<8} {'Total':<8} {'Net':<8}")
-    print("-" * 46)
+    print(f"\n--- {state['title']} ---")
+    print(f"{state['date']}: " + " | ".join(f"{e['label']} = {state['counts'][e['key']]}" for e in els))
+    print("All-time: " + " | ".join(f"{e['label']} = {state['totals'][e['key']]}" for e in els) + "\n")
+    print(f"Past {len(history)} days:")
+    print(f"{'Date':<12}" + "".join(f"{e['label']:<10}" for e in els) + "Total")
     for h in history:
-        tot = h["d_out"] + h["d_in"]
-        net = h["d_out"] - h["d_in"]
-        net_str = f"+{net}" if net > 0 else str(net)
-        print(f"{h['date']:<12} {h['d_out']:<8} {h['d_in']:<8} {tot:<8} {net_str:<8}")
-
+        print(f"{h['date']:<12}" + "".join(f"{h['counts'][e['key']]:<10}" for e in els) + str(h["total"]))
 
 def cmd_place(args):
     from datetime import datetime, timezone, timedelta
@@ -362,6 +340,9 @@ def cmd_profile(args):
     }.items() if v is not None}
     if args.birth_year is not None and args.date_of_birth is None:
         updates["date_of_birth"] = None  # a bare year replaces a full date of birth
+    if args.counter is not None:
+        title, _, elements = args.counter.partition(":")
+        updates["counter"] = {"title": title, "elements": [e.strip() for e in elements.split(",") if e.strip()]} if args.counter.strip() else None
     if updates:
         try:
             profile = save_profile(ProfileConfig.model_validate({**profile.model_dump(), **updates}), db_path)
@@ -564,14 +545,12 @@ def main():
     p_history.add_argument("-n", "--limit", type=int, default=25, help="Number of records to display (default: 25)")
     p_history.add_argument("-t", "--type", choices=["weight", "blood_pressure", "ecg", "activity", "workout", "sleep", "supplement", "genomics"], help="Filter by record type")
 
-    p_counter = subparsers.add_parser("counter", help="Track, view, or enter D(out) and D(in) counts for today or past days")
+    p_counter = subparsers.add_parser("counter", help="Show or change today's (or a past day's) counts for the counter set in your profile")
     p_counter.add_argument("-d", "--date", help="Target date (YYYY-MM-DD), defaults to today")
-    p_counter.add_argument("--out", type=int, help="Set D(out) count explicitly")
-    p_counter.add_argument("--in", dest="in_", type=int, help="Set D(in) count explicitly")
-    p_counter.add_argument("--inc", choices=["d_out", "d_in"], help="Increment counter by 1")
-    p_counter.add_argument("--dec", choices=["d_out", "d_in"], help="Decrement counter by 1")
-    p_counter.add_argument("--seed", type=int, metavar="DAYS", help="Seed historical demo data")
-    p_counter.add_argument("--import", dest="import_file", help="Path to JSON or CSV file with historic records")
+    p_counter.add_argument("--set", nargs="+", metavar="NAME=N", help='Set counts explicitly, e.g. --set "D(out)=3" "D(in)=1"')
+    p_counter.add_argument("--inc", metavar="NAME", help="Add 1 to a counter (its label or key)")
+    p_counter.add_argument("--dec", metavar="NAME", help="Take 1 from a counter (its label or key)")
+    p_counter.add_argument("--import", dest="import_file", help="JSON or CSV of past days (a date column plus one column per counter)")
     p_counter.add_argument("-n", "--history", type=int, default=10, help="Number of historical days to list (default: 10)")
 
     p_place = subparsers.add_parser("place", help="View, add, or delete dwell places (>1 hr)")
@@ -669,6 +648,7 @@ def main():
     p_prof.add_argument("--smoker", action=argparse.BooleanOptionalAction, default=None, help="Current smoker")
     p_prof.add_argument("--diabetic", action=argparse.BooleanOptionalAction, default=None, help="Diabetic")
     p_prof.add_argument("--bp-treated", action=argparse.BooleanOptionalAction, default=None, help="Taking blood-pressure medication")
+    p_prof.add_argument("--counter", metavar='"TITLE: A, B"', help='Daily counter tile, e.g. "D Tracker: D(out), D(in)"; "" removes it')
 
     p_cfg = subparsers.add_parser("config", help="Manage configuration file")
     p_cfg.add_argument("config_action", choices=["init", "show"], help="Action: init (create default file), show (print active config)")

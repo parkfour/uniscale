@@ -10,17 +10,23 @@ import org.junit.Test
 class CounterAndPlacesTest {
 
     @Test
-    fun testCounterStateDefaultsAndCopy() {
-        val counter = CounterState(dOut = 3, dIn = 1, totalDOut = 10, totalDIn = 5, date = "2026-11-14")
-        assertEquals(3, counter.dOut)
-        assertEquals(1, counter.dIn)
-        assertEquals(10, counter.totalDOut)
-        assertEquals(5, counter.totalDIn)
-        assertEquals("2026-11-14", counter.date)
+    fun `the counter tile is built from the hub's counter set`() {
+        val c = CounterState.fromJson(JSONObject("""{"title": "Swearing",
+            "elements": [{"key": "f", "label": "F"}, {"key": "s", "label": "S"}],
+            "date": "2026-11-17", "counts": {"f": 2, "s": 0}, "totals": {"f": 9, "s": 4},
+            "daily_history": [{"date": "2026-11-17", "counts": {"f": 2, "s": 0}, "total": 2}]}"""))
+        assertEquals("Swearing", c.title)
+        assertEquals(listOf(CounterElement("f", "F"), CounterElement("s", "S")), c.elements)
+        assertEquals(mapOf("f" to 2, "s" to 0), c.counts)
+        assertEquals(9, c.totals["f"])
+        assertEquals(CounterDailyRecord("2026-11-17", mapOf("f" to 2, "s" to 0), 2), c.dailyHistory.single())
+    }
 
-        val updated = counter.copy(dOut = counter.dOut + 1, dIn = (counter.dIn - 1).coerceAtLeast(0))
-        assertEquals(4, updated.dOut)
-        assertEquals(0, updated.dIn)
+    @Test
+    fun `no counter set up reads as no elements`() {
+        val c = CounterState.fromJson(JSONObject("""{"title": null, "elements": [], "date": "2026-11-17", "counts": {}}"""))
+        assertEquals(null, c.title)
+        assertTrue(c.elements.isEmpty())
     }
 
     @Test

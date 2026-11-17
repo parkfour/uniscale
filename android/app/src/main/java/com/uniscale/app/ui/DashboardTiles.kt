@@ -2,6 +2,7 @@ package com.uniscale.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -179,12 +180,19 @@ fun ProtocolHalf(doses: List<Dose>, modifier: Modifier) {
     )
 }
 
+private val COUNTER_COLORS = listOf(
+    Color(0xFF38BDF8), Color(0xFF10B981), Color(0xFFF59E0B), Color(0xFFA78BFA),
+    Color(0xFFF472B6), Color(0xFFF87171), Color(0xFF2DD4BF), Color(0xFFFACC15)
+)
+
+private fun counterColor(i: Int) = COUNTER_COLORS[i % COUNTER_COLORS.size]
+
 @Composable
 fun CounterHalf(counter: CounterState, modifier: Modifier = Modifier) = HalfTile(
-    "D Tracker", Icons.Default.SwapHoriz, Color(0xFF0EA5E9),
-    big = "${counter.dOut} / ${counter.dIn}",
-    details = listOf("D(out): ${counter.dOut}", "D(in): ${counter.dIn}", "Tap to adjust"),
-    empty = "D(out): 0 · D(in): 0",
+    counter.title ?: "Counter", Icons.Default.SwapHoriz, Color(0xFF0EA5E9),
+    big = counter.elements.takeIf { it.isNotEmpty() }?.joinToString(" / ") { "${counter.counts[it.key] ?: 0}" },
+    details = counter.elements.map { "${it.label}: ${counter.counts[it.key] ?: 0}" } + "Tap to adjust",
+    empty = "Set up a counter in your profile on the hub",
     modifier = modifier
 )
 
@@ -590,10 +598,7 @@ fun EcgFull(ecg: EcgData?, tall: Boolean, modifier: Modifier = Modifier) {
 @Composable
 fun CounterFull(
     counter: CounterState,
-    onIncDOut: () -> Unit,
-    onDecDOut: () -> Unit,
-    onIncDIn: () -> Unit,
-    onDecDIn: () -> Unit,
+    onAdjust: (key: String, delta: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     ElevatedCard(
@@ -604,81 +609,46 @@ fun CounterFull(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.SwapHoriz, contentDescription = null, tint = Color(0xFF0EA5E9))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("D Tracker", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text(counter.title ?: "Counter", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                 Spacer(modifier = Modifier.weight(1f))
                 Badge(containerColor = Color(0xFF0EA5E9).copy(alpha = 0.2f)) {
                     Text("Daily", color = Color(0xFF0EA5E9), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            if (counter.elements.isEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "No counter set up. Add one in your profile on the hub: a title and its buttons, e.g. D Tracker with D(out), D(in).",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                return@Column
+            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // D(out) Box
-                ElevatedCard(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+            Spacer(modifier = Modifier.height(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                counter.elements.forEachIndexed { i, e ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("D(out)", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF38BDF8))
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text("${counter.dOut}", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold)
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            FilledTonalIconButton(
-                                onClick = onDecDOut,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(Icons.Default.Remove, contentDescription = "Decrement D(out)")
-                            }
-                            FilledTonalIconButton(
-                                onClick = onIncDOut,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = "Increment D(out)")
-                            }
+                        Text(e.label, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = counterColor(i), modifier = Modifier.weight(1f))
+                        FilledTonalIconButton(onClick = { onAdjust(e.key, -1) }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Remove, contentDescription = "Take one from ${e.label}")
                         }
-                    }
-                }
-
-                // D(in) Box
-                ElevatedCard(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("D(in)", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = Color(0xFF10B981))
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text("${counter.dIn}", fontSize = 36.sp, fontWeight = FontWeight.ExtraBold)
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            FilledTonalIconButton(
-                                onClick = onDecDIn,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(Icons.Default.Remove, contentDescription = "Decrement D(in)")
-                            }
-                            FilledTonalIconButton(
-                                onClick = onIncDIn,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = "Increment D(in)")
-                            }
+                        Text(
+                            "${counter.counts[e.key] ?: 0}",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.width(64.dp)
+                        )
+                        FilledTonalIconButton(onClick = { onAdjust(e.key, 1) }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Add, contentDescription = "Add one to ${e.label}")
                         }
                     }
                 }
@@ -686,7 +656,7 @@ fun CounterFull(
 
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                "Lifetime totals: D(out) ${counter.totalDOut} · D(in) ${counter.totalDIn}",
+                "All-time: " + counter.elements.joinToString(" · ") { "${it.label} ${counter.totals[it.key] ?: 0}" },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.outline
             )
@@ -705,35 +675,18 @@ fun CounterFull(
                 Spacer(modifier = Modifier.height(8.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     recent.forEach { rec ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                rec.date,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "D(out): ${rec.dOut}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF38BDF8),
-                                modifier = Modifier.padding(end = 12.dp)
-                            )
-                            Text(
-                                "D(in): ${rec.dIn}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF10B981),
-                                modifier = Modifier.padding(end = 12.dp)
-                            )
-                            Text(
-                                "Total: ${rec.dOut + rec.dIn}",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.outline
-                            )
+                        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(rec.date, fontSize = 12.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                            counter.elements.forEachIndexed { i, e ->
+                                Text(
+                                    "${e.label}: ${rec.counts[e.key] ?: 0}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = counterColor(i),
+                                    modifier = Modifier.padding(end = 10.dp)
+                                )
+                            }
+                            Text("Total: ${rec.total}", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
                         }
                     }
                 }

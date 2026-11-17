@@ -1,5 +1,8 @@
 package com.uniscale.app.model
 
+import org.json.JSONArray
+import org.json.JSONObject
+
 import java.time.Instant
 
 enum class DeviceCategory {
@@ -194,20 +197,44 @@ data class DiscoveredDevice(
     val lastSeen: Instant = Instant.now()
 )
 
+/** One button of the counter tile; [key] is how the hub stores it ("D(out)" -> "d_out"). */
+data class CounterElement(val key: String, val label: String)
+
 data class CounterDailyRecord(
     val date: String,
-    val dOut: Int = 0,
-    val dIn: Int = 0
+    val counts: Map<String, Int> = emptyMap(),
+    val total: Int = 0
 )
 
+/** The counter set from the hub profile (no elements: none set up) and its counts. */
 data class CounterState(
-    val dOut: Int = 0,
-    val dIn: Int = 0,
-    val totalDOut: Int = 0,
-    val totalDIn: Int = 0,
+    val title: String? = null,
+    val elements: List<CounterElement> = emptyList(),
     val date: String = "",
+    val counts: Map<String, Int> = emptyMap(),
+    val totals: Map<String, Int> = emptyMap(),
     val dailyHistory: List<CounterDailyRecord> = emptyList()
-)
+) {
+    companion object {
+        private fun JSONObject?.intMap(): Map<String, Int> =
+            this?.keys()?.asSequence()?.associateWith { optInt(it, 0) } ?: emptyMap()
+
+        private fun JSONArray?.objects(): List<JSONObject> =
+            if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
+
+        /** From the hub's /api/counter response. */
+        fun fromJson(json: JSONObject) = CounterState(
+            title = json.optString("title").takeIf { it.isNotBlank() && it != "null" },
+            elements = json.optJSONArray("elements").objects().map { CounterElement(it.optString("key"), it.optString("label")) },
+            date = json.optString("date", ""),
+            counts = json.optJSONObject("counts").intMap(),
+            totals = json.optJSONObject("totals").intMap(),
+            dailyHistory = json.optJSONArray("daily_history").objects().map {
+                CounterDailyRecord(it.optString("date", ""), it.optJSONObject("counts").intMap(), it.optInt("total", 0))
+            }
+        )
+    }
+}
 
 data class DwellPlace(
     val id: String,

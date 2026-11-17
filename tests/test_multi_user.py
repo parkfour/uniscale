@@ -157,7 +157,7 @@ def test_profiles_are_per_user_and_drive_longevity(multi):
         users_dir.mkdir(parents=True, exist_ok=True)
         (users_dir / "measurements.jsonl").write_text(json.dumps(LAB) + "\n")
 
-    alice = {"name": None, "date_of_birth": None, "birth_year": 1975, "sex": "female",
+    alice = {"name": None, "counter": None, "date_of_birth": None, "birth_year": 1975, "sex": "female",
              "smoker": False, "diabetic": False, "bp_treated": True}
     assert c.put("/api/profile", json=alice, headers=_bearer("tok-alice-phone")).status_code == 200
     assert c.get("/api/profile", headers=_bearer("tok-alice-laptop")).json() == alice
@@ -210,7 +210,7 @@ def test_cli_profile_edits_only_given_fields(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", base + ["--no-smoker"])
     cli.main()
     saved = json.loads((tmp_path / "users" / "alice" / "profile.json").read_text())
-    assert saved == {"name": None, "date_of_birth": None, "birth_year": 1975, "sex": "female",
+    assert saved == {"name": None, "counter": None, "date_of_birth": None, "birth_year": 1975, "sex": "female",
                      "smoker": False, "diabetic": False, "bp_treated": False}
 
     monkeypatch.setattr(sys, "argv", base + ["--birth-year", "1700"])
