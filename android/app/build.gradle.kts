@@ -81,8 +81,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Health Connect
-    implementation("androidx.health.connect:connect-client:1.1.0-alpha11")
+    // Background sync and reminders
     implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     // Coroutines

@@ -41,7 +41,6 @@ fun SettingsDialog(
     onRequestClientCertificate: ((String?) -> Unit) -> Unit = {},
     onPickSound: (current: String, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
     onSyncWatch: () -> Unit = {},
-    onExportData: () -> Unit = {},
     onClearTodayData: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
@@ -56,7 +55,6 @@ fun SettingsDialog(
     var clientCertAlias by remember { mutableStateOf(currentConfig.clientCertAlias) }
     var themeMode by remember { mutableStateOf(currentConfig.themeMode) }
     var autoUploadHub by remember { mutableStateOf(currentConfig.autoUploadHub) }
-    var autoSyncHealthConnect by remember { mutableStateOf(currentConfig.autoSyncHealthConnect) }
     var watchSyncMinutes by remember { mutableStateOf(currentConfig.watchSyncMinutes) }
     var supplementReminders by remember { mutableStateOf(currentConfig.supplementReminders) }
     var doneSound by remember { mutableStateOf(currentConfig.doneSound) }
@@ -669,11 +667,8 @@ fun SettingsDialog(
                         OutlinedButton(onClick = onSyncWatch, modifier = Modifier.weight(1f)) {
                             Text("Watch", fontSize = 13.sp)
                         }
-                        OutlinedButton(onClick = onExportData, modifier = Modifier.weight(1f)) {
-                            Text("Export Vault", fontSize = 13.sp)
-                        }
                     }
-                    // Deletes today's Health Connect records, so it takes a second tap.
+                    // Deletes today's readings on this phone (not the hub's), so it takes a second tap.
                     OutlinedButton(
                         onClick = {
                             if (confirmClearToday) {
@@ -725,7 +720,6 @@ fun SettingsDialog(
                                     clientCertAlias = imported.clientCertAlias
                                     themeMode = imported.themeMode
                                     autoUploadHub = imported.autoUploadHub
-                                    autoSyncHealthConnect = imported.autoSyncHealthConnect
                                     watchSyncMinutes = imported.watchSyncMinutes
                                     supplementReminders = imported.supplementReminders
                                     doneSound = imported.doneSound
@@ -785,7 +779,6 @@ fun SettingsDialog(
                                 clientCertAlias = if (enableMtls) clientCertAlias else null,
                                 themeMode = themeMode,
                                 autoUploadHub = autoUploadHub,
-                                autoSyncHealthConnect = autoSyncHealthConnect,
                                 watchSyncMinutes = watchSyncMinutes,
                                 supplementReminders = supplementReminders,
                                 doneSound = doneSound,

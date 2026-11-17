@@ -5,7 +5,6 @@
   "client_cert_alias": "",
   "theme_mode": "system",
   "auto_upload_hub": true,
-  "auto_sync_health_connect": true,
   "force_yunmai_pounds": true,
   "preferred_unit": "lb",
   "enable_yunmai": true,

@@ -36,7 +36,7 @@ data class WeightData(
     val bmrKcal: Int? = null,
     val timestamp: Instant = Instant.now(),
     val deviceName: String,
-    val deviceAddress: String = "Health Connect"
+    val deviceAddress: String = ""
 )
 
 object BiaCalculator {
@@ -102,7 +102,7 @@ data class BloodPressureData(
     val pulse: Int,
     val timestamp: Instant = Instant.now(),
     val deviceName: String,
-    val deviceAddress: String = "Health Connect"
+    val deviceAddress: String = ""
 )
 
 data class EcgData(
@@ -121,7 +121,8 @@ data class WatchActivityData(
     val distanceKm: Float = 0f,
     val calories: Long = 0,
     val deviceName: String = "Garmin",
-    val timestamp: Instant = Instant.now()
+    val timestamp: Instant = Instant.now(),
+    val date: java.time.LocalDate = java.time.LocalDate.now()
 )
 
 data class SleepData(
@@ -140,7 +141,7 @@ data class SleepData(
     val lowestSpo2: Float? = null,
     val avgRespiration: Float? = null,
     val deviceName: String = "Garmin",
-    val deviceAddress: String = "Health Connect"
+    val deviceAddress: String = ""
 ) {
     val durationHours: Float
         get() = ((durationSeconds / 3600f) * 10f).let { Math.round(it) / 10f }

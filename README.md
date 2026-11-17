@@ -15,16 +15,15 @@
   * **Omron Cuff:** Standard Bluetooth SIG IEEE-11073 SFLOAT parsing on Service `0x1810`.
 * **Garmin Watch Offline Integration:**
   * Connects your **Garmin watch** directly to your phone via **Gadgetbridge** over BLE.
-  * Reads sleep (the watch's own score, stages, overnight HRV, SpO2) and workout summaries from Gadgetbridge's
-    auto-exported database, with no cloud and no Health Connect in between.
-  * Daily steps and distance still come through **Android Health Connect**.
+  * Reads sleep (the watch's own score, stages, overnight HRV, SpO2), workout summaries and daily steps and
+    distance from Gadgetbridge's auto-exported database, with no cloud and no Google Health Connect in between.
+  * The app doesn't use Health Connect at all: readings stay between your devices, the phone and your hub.
 * **Configurable Self-Hosted Service:**
   * Self-contained web dashboard (dark cardiac theme, responsive charts, live ECG waveform canvas).
   * Binds to `127.0.0.1` by default; an optional shared `api_token` protects every route (Bearer token for the apps, HTTP Basic password in the browser).
 * **Complete Account Liberation & Migration:**
   * Importers for Garmin bulk data archives (`.FIT` workouts and daily health summaries) and the watch's own sleep/HRV `.FIT` files.
   * Importer for the full Google Fit Takeout (`.zip` read in place): daily summaries with heart rate, weights, blood pressure, sleep and workouts.
-  * One-touch export of Android on-device Health Connect data.
 
 ---
 
@@ -41,11 +40,11 @@
                   │                              │ (auto-exported DB)   │
                   ▼                              └──────────┬───────────┘
 ┌─────────────────────────────────────────┐                 │ file read
-│ Android app (Compose)                   │◀────────────────┘ (sleep, workouts;
-│ tiles, live ECG, supplement checklist,  │                    background job)
-│ Ask Dr. Gemma                           │
-│   ⇄ Health Connect: steps/distance in,  │
-│     a copy of weight/BP out             │
+│ Android app (Compose)                   │◀────────────────┘ (sleep, workouts,
+│ tiles, live ECG, supplement checklist,  │                    steps, distance;
+│ Ask Dr. Gemma                           │                    background job)
+│   readings kept on the phone until the  │
+│   hub has them (no Health Connect)      │
 └────────────────────┬────────────────────┘
                      │ HTTPS: /api/sync/*, supplements, chat
                      ▼
@@ -305,9 +304,8 @@ Located in `android/`, built with:
 * **Jetpack Compose + Material3**
 * **Direct BLE Scanner & Handshake Router**
 * **Real-Time 125 Hz ECG Canvas**
-* **Gadgetbridge Auto-Export Reader:** In Settings → Data, tap **Watch** and pick Gadgetbridge's auto-export file; nightly sleep and workout summaries sync to the hub from it, also in the background (Settings → Background Sync: Off, 15m, 30m, 1h, 2h or 4h, which also sends Health Connect steps, weigh-ins and BP and queued supplement ticks; on Android 14+ allow Health Connect background access).
-* **Android Health Connect Integration:** Reads local Garmin daily steps and distance synced by Gadgetbridge; writes weigh-ins and blood pressure readings.
-* **One-Click Vault Export:** Dumps all on-device Health Connect records into `uniscale_health_connect_export.json` for backup and offline migration.
+* **Gadgetbridge Auto-Export Reader:** In Settings → Data, tap **Watch** and pick Gadgetbridge's auto-export file; nightly sleep, workout summaries and daily steps and distance sync to the hub from it, also in the background (Settings → Background Sync: Off, 15m, 30m, 1h, 2h or 4h, which also sends the phone's weigh-ins and BP readings and queued supplement ticks).
+* **No Health Connect:** the app neither reads nor writes Android Health Connect. Weigh-ins and BP readings are kept in the app's private storage until the hub has them; the Weight and BP tiles show those plus the hub's history.
 * **Declarative Mobile Configuration (`uniscale_config.json`):**
   * **In-App Settings Dialog:** Tap the gear icon in the top app bar to configure upstream Hub URL, API bearer token, auto-sync switches, and hardware driver toggles. Includes an instant "Test Hub Connection" latency ping.
   * **Portable JSON Configuration:** Export active app configuration to `/sdcard/Download/uniscale_config.json` or import pre-existing configuration files with a single tap.

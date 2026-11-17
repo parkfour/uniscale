@@ -48,7 +48,7 @@ class HubSyncManager(
 
     private fun markSynced(key: String) = syncPrefs.edit().putLong(key, System.currentTimeMillis()).apply()
 
-    // Health Connect is only read back ~30 days, so older entries can never be asked about again.
+    // Local readings are kept 90 days and the watch export is read back ~30, so older entries never come up again.
     private fun pruneSyncState(maxAgeDays: Long = 120) {
         val cutoff = System.currentTimeMillis() - maxAgeDays * 86_400_000L
         val stale = syncPrefs.all.filter { (_, v) -> v !is Long || v < cutoff }.keys
@@ -204,14 +204,21 @@ class HubSyncManager(
         val config = configManager.config.value
         if (!config.autoUploadHub || config.hubUrl.isBlank()) return@withContext false
 
+        // Today's running total goes up on every sync; a finished day's final total only once.
+        val finished = activity.date.isBefore(java.time.LocalDate.now())
+        val key = syncKey("act_${activity.date}")
+        if (finished && isSynced(key)) return@withContext true
+
         try {
             val json = JSONObject()
-            json.put("date", java.time.LocalDate.now().toString())
+            json.put("date", activity.date.toString())
             json.put("steps", activity.steps)
             json.put("distance_km", activity.distanceKm)
             json.put("source", activity.deviceName)
 
-            postJson("${config.hubUrl.trimEnd('/')}/api/sync/activity", json, config.apiToken)
+            val success = postJson("${config.hubUrl.trimEnd('/')}/api/sync/activity", json, config.apiToken)
+            if (success && finished) markSynced(key)
+            success
         } catch (e: Exception) {
             Log.e("HubSync", "Failed uploading watch activity: ${e.message}")
             false
@@ -331,6 +338,19 @@ class HubSyncManager(
                 null
             }
         }
+
+    /** The hub's newest weigh-ins, newest first; empty when the hub can't be reached. */
+    suspend fun fetchWeights(limit: Int = 60): List<WeightData> =
+        historyRecords("weight", limit).mapNotNull { runCatching { LocalReadings.weightFrom(it) }.getOrNull() }
+
+    /** The hub's newest blood-pressure readings, newest first; empty when the hub can't be reached. */
+    suspend fun fetchBloodPressures(limit: Int = 60): List<BloodPressureData> =
+        historyRecords("blood_pressure", limit).mapNotNull { runCatching { LocalReadings.bpFrom(it) }.getOrNull() }
+
+    private suspend fun historyRecords(type: String, limit: Int): List<JSONObject> {
+        val records = request("/api/history?record_type=$type&limit=$limit")?.optJSONArray("records") ?: return emptyList()
+        return (0 until records.length()).mapNotNull { records.optJSONObject(it) }
+    }
 
     private fun postJson(url: String, json: JSONObject, token: String?): Boolean {
         val reqBuilder = Request.Builder()

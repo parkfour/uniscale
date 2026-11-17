@@ -2,7 +2,7 @@
 
 Welcome to the documentation for **UniScale**, a unified, offline-first personal health hub, BLE bridge, and telemetry vault.
 
-UniScale is designed to give you complete ownership and sovereignty over your physical health data. It connects directly to smart scales, blood pressure monitors, ECG devices, and wearable watches over Bluetooth Low Energy and Android Health Connect, storing all metrics locally in open, transparent formats.
+UniScale is designed to give you complete ownership and sovereignty over your physical health data. It connects directly to smart scales, blood pressure monitors, ECG devices, and wearable watches over Bluetooth Low Energy (watches through Gadgetbridge's local export, never Google Health Connect), storing all metrics locally in open, transparent formats.
 
 ```
                     ┌──────────────────────────────┐
@@ -23,14 +23,9 @@ UniScale is designed to give you complete ownership and sovereignty over your ph
         │                          │               │  (F-Droid / Offline) │
         │                          │               └──────────┬───────────┘
         │                          │                          │
-        │                          │                          │ Health Connect API
+        │                          │                          │ auto-exported
+        │                          │                          │ database file
         ▼                          ▼                          ▼
- ┌─────────────────────────────────────────────────────────────────────────┐
- │                   Android On-Device Health Connect                      │
- │                     (100% Local SQLite Database)                        │
- └───────────────────────────────────┬─────────────────────────────────────┘
-                                     │
-                                     ▼
  ┌─────────────────────────────────────────────────────────────────────────┐
  │                          UniScale Ecosystem                             │
  │                                                                         │
@@ -49,7 +44,7 @@ UniScale is designed to give you complete ownership and sovereignty over your ph
    * Mobile architecture & Jetpack Compose UI
    * Direct Bluetooth Low Energy (BLE) engine & device decoders
    * Real-time 125 Hz ECG canvas rendering
-   * Health Connect & Gadgetbridge offline watch integration
+   * Gadgetbridge offline watch integration (no Health Connect)
    * Hub synchronization & portable JSON configuration
    * Building and installing debug APKs
 

@@ -15,7 +15,6 @@ data class AppConfig(
     val enableMtls: Boolean = false,
     val clientCertAlias: String? = null,
     val autoUploadHub: Boolean = true,
-    val autoSyncHealthConnect: Boolean = true,
     val forceYunmaiPounds: Boolean = true,
     val preferredUnit: String = "lb",
     val enableYunmai: Boolean = true,
@@ -47,7 +46,6 @@ data class AppConfig(
             json.put("client_cert_alias", clientCertAlias)
         }
         json.put("auto_upload_hub", autoUploadHub)
-        json.put("auto_sync_health_connect", autoSyncHealthConnect)
         json.put("force_yunmai_pounds", forceYunmaiPounds)
         json.put("preferred_unit", preferredUnit)
         json.put("enable_yunmai", enableYunmai)
@@ -97,7 +95,6 @@ data class AppConfig(
                 enableMtls = json.optBoolean("enable_mtls", mtlsDefault),
                 clientCertAlias = certAlias,
                 autoUploadHub = json.optBoolean("auto_upload_hub", true),
-                autoSyncHealthConnect = json.optBoolean("auto_sync_health_connect", true),
                 forceYunmaiPounds = json.optBoolean("force_yunmai_pounds", true),
                 preferredUnit = json.optString("preferred_unit", "lb"),
                 enableYunmai = json.optBoolean("enable_yunmai", true),

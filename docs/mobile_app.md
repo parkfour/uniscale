@@ -1,6 +1,6 @@
 # UniScale Android Mobile App
 
-The **UniScale Android Application** (`android/`) is an offline-first companion application built with modern Android standards (Kotlin, Jetpack Compose, Material3, and Coroutines/Flow). It interfaces directly with smart scales, blood pressure monitors, and real-time ECG hardware over Bluetooth Low Energy (BLE), reads daily wearable statistics from Android Health Connect, and automatically synchronizes measurements to your self-hosted UniScale Hub.
+The **UniScale Android Application** (`android/`) is an offline-first companion application built with modern Android standards (Kotlin, Jetpack Compose, Material3, and Coroutines/Flow). It interfaces directly with smart scales, blood pressure monitors, and real-time ECG hardware over Bluetooth Low Energy (BLE), reads watch data from Gadgetbridge's auto-exported database (it doesn't use Android Health Connect), and automatically synchronizes measurements to your self-hosted UniScale Hub.
 
 ---
 
@@ -17,22 +17,23 @@ The mobile application is structured around reactive state streams and offline-f
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Managers & Coordinators                         │
-│   BleManager      │ HealthConnectManager │ HubSyncManager              │
-│   (BLE GATT / RX) │ (Watch & Vitals SDK) │ (HTTP REST Ingestion)       │
+│   BleManager      │ GadgetbridgeExport   │ HubSyncManager              │
+│   (BLE GATT / RX) │ LocalReadings        │ (HTTP REST Ingestion)       │
 └───────────┬───────────────────────┬──────────────────────┬─────────────┘
             │                       │                      │
             ▼                       ▼                      ▼
 ┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐
-│   Bluetooth Devices  │ │ Android Health Conn. │ │ Self-Hosted UniScale │
-│ Yunmai, Fitdays, BP2 │ │ (Local Watch Vault)  │ │   HTTP/HTTPS Service │
+│   Bluetooth Devices  │ │ Gadgetbridge export  │ │ Self-Hosted UniScale │
+│ Yunmai, Fitdays, BP2 │ │ + app-private store  │ │   HTTP/HTTPS Service │
 └──────────────────────┘ └──────────────────────┘ └──────────────────────┘
 ```
 
 ### Key Modules:
-* **`com.uniscale.app.MainActivity`**: Main entry point, runtime permissions management (BLE scan/connect, notification, health permissions), and dashboard lifecycle.
+* **`com.uniscale.app.MainActivity`**: Main entry point, runtime permissions management (BLE scan/connect, notification), and dashboard lifecycle.
 * **`com.uniscale.app.ble.BleManager`**: Handles BLE scanning, connection lifecycle, MTU negotiation, GATT characteristic subscription, packet routing, and packet reassembly.
 * **`com.uniscale.app.ble.DeviceDecoders`**: Byte-level parsers for body composition, impedance, blood pressure, and real-time ECG packets.
-* **`com.uniscale.app.sync.HealthConnectManager`**: Interacts with the on-device Android Health Connect provider to read Garmin watch data (via Gadgetbridge) and write scale / blood pressure records.
+* **`com.uniscale.app.sync.GadgetbridgeExport`**: Reads sleep, workouts and daily steps/distance from Gadgetbridge's auto-exported database.
+* **`com.uniscale.app.sync.LocalReadings`**: Keeps the phone's weigh-ins and BP readings (newest 200, last 90 days) in app-private storage until the hub has them.
 * **`com.uniscale.app.sync.HubSyncManager`**: Async HTTP client that delivers collected telemetry payloads to the UniScale server.
 * **`com.uniscale.app.config.AppConfigManager`**: Manages portable application preferences with in-memory caching and JSON file import/export.
 * **`com.uniscale.app.ui.EcgWaveformCanvas`**: Hardware-accelerated Compose canvas that renders 125 Hz Lead-I cardiac rhythms in real time.
@@ -87,12 +88,12 @@ The real-time ECG screen (`EcgWaveformCanvas.kt`) provides medical-monitor-style
 
 ---
 
-## 4. Watch Data (Gadgetbridge) & Health Connect
+## 4. Watch Data (Gadgetbridge)
 
 To integrate wearable smartwatches (such as Garmin watches) completely offline, UniScale uses **Gadgetbridge**, which
 connects to the watch directly over BLE (no Garmin Connect cloud).
 
-### Sleep and workouts: Gadgetbridge auto-export (no Health Connect)
+### Gadgetbridge auto-export (no Health Connect)
 
 Gadgetbridge keeps everything it downloads from the watch in its own database, including what Health Connect doesn't
 carry: Garmin's own sleep score, overnight HRV and its status, and full workout summaries. Android doesn't let other
@@ -112,19 +113,20 @@ apps read Gadgetbridge's private folder, so UniScale reads the copy Gadgetbridge
      contact, vertical oscillation and ratio, stride length), time in each heart-rate zone, the splits (usually per
      km, with pace and heart rate), and the heart rate during the workout from `GARMIN_ACTIVITY_SAMPLE` (about one
      sample a minute). Sent to `POST /api/sync/workout`; the dashboard shows them when you open a workout.
+   * **Steps and distance** for today and yesterday from `GARMIN_ACTIVITY_SAMPLE`, whose `STEPS` and `DISTANCE_CM`
+     are running totals for the day: the day's largest value after midnight. Today's total is sent on every sync,
+     a finished day's once, to `POST /api/sync/activity`.
 
-   Each record is uploaded once per hub and user. Once an export file is set, sleep is no longer read from
-   Health Connect. Second-by-second data and GPS tracks stay in the watch's FIT files; import those on the
+   Each record is uploaded once per hub and user. Second-by-second data and GPS tracks stay in the watch's FIT files; import those on the
    server (see the Garmin importer) if you want them.
 
-### Health Connect
+### Scale and blood-pressure readings
 
-1. Gadgetbridge can also write daily step counts, distance, sleep sessions and heart rate into Android Health Connect.
-2. UniScale's `HealthConnectManager` reads these local records (sleep only when no Gadgetbridge export is set):
-   * **`readTodayWatchActivity()`**: Retrieves current day steps, distance in km, and active energy burned.
-   * **`readBloodPressureHistory()` & `readWeightHistory()`**: Reads existing historical records.
-   * **`insertWeightRecord()` & `insertBloodPressureRecord()`**: Writes new scale and cuff readings into Health Connect, making them accessible to any other local health app.
-4. **One-Touch Vault Export:** Tap "Export Health Connect JSON" in the settings dialog to dump all on-device records into `uniscale_health_connect_export.json` for independent backup and migration.
+The app doesn't use Android Health Connect: it neither reads nor writes it. Each weigh-in and BP reading is saved
+in the app's private storage (`LocalReadings`, `readings.json`) and uploaded to the hub; every sync uploads them again
+until the hub has them, so readings taken offline are sent later. The Weight and BP tiles show these plus the hub's
+history (`GET /api/history`), so a fresh install shows past readings as soon as the hub is reachable.
+**Clear Today** (Settings → Data) deletes today's readings on the phone; the hub keeps its copy.
 
 ---
 
@@ -138,8 +140,8 @@ The mobile app includes an automated background sync engine (`HubSyncManager`):
   * `POST /api/sync/ecg`
   * `POST /api/sync/activity`
 * **Background Sync:** Settings → Background Sync (Off, 15m, 30m, 1h, 2h, 4h). A WorkManager job sends what opening
-  the app would: Gadgetbridge sleep and workouts, Health Connect steps, weigh-ins and BP, and queued supplement
-  ticks. Already-sent readings are skipped. On Android 14+ it needs Health Connect's background-read permission.
+  the app would: Gadgetbridge sleep, workouts, steps and distance, the phone's weigh-ins and BP readings, and queued
+  supplement ticks. Already-sent readings are skipped.
 * **Bearer Token Authentication:** Optional API token header (`Authorization: Bearer <token>`) for protected instances.
 * **Supplement checklist:** the dashboard's *Today's Protocol* card shows the hub's checklist grouped by slot
   (`GET /api/supplements`). Ticking a dose sends `POST /api/supplements` with the slot and the tap time; unticking
@@ -170,7 +172,6 @@ Tap the **Gear icon** in the top navigation bar to edit:
 * **Hub Server URL:** (e.g. `http://192.168.1.50:8088` or `https://health.example.com`)
 * **API Bearer Token:** Optional shared secret
 * **Automatic Upload Toggle:** Enable or disable automatic background uploads upon measurement
-* **Health Connect Auto-Sync:** Toggle continuous step and distance polling
 * **Device Drivers:** Enable or disable specific hardware protocols (Yunmai, Fitdays, VeSync, BP2, Omron)
 * **Unit Preference:** Toggle between imperial pounds (`lb`) and metric kilograms (`kg`)
 
@@ -182,7 +183,6 @@ The application can import or export configuration via an external JSON file sav
   "hub_url": "https://health.example.com",
   "api_token": "your-secure-token-here",
   "auto_upload_hub": true,
-  "auto_sync_health_connect": true,
   "force_yunmai_pounds": true,
   "preferred_unit": "lb",
   "enable_yunmai": true,
@@ -225,5 +225,4 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 The application requests the following permissions at runtime:
 * `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT` (Android 12+)
 * `ACCESS_FINE_LOCATION` (Android 11 and lower for BLE beacon discovery)
-* Health Connect Read/Write permissions for Steps, Distance, Weight, Body Fat, and Blood Pressure.
 * `POST_NOTIFICATIONS` (Android 13+) for supplement reminders and Dr. Gemma's replies.

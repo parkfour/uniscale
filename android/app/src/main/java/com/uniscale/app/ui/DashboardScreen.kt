@@ -46,7 +46,6 @@ fun DashboardScreen(
     historyBp: List<com.uniscale.app.model.BloodPressureData> = emptyList(),
     onImportHistory: () -> Unit = {},
     onSyncWatch: () -> Unit = {},
-    onExportData: () -> Unit = {},
     onClearTodayData: () -> Unit = {},
     onRequestClientCertificate: ((String?) -> Unit) -> Unit = {},
     onPickSound: (current: String, onPicked: (String) -> Unit) -> Unit = { _, _ -> },
@@ -82,7 +81,7 @@ fun DashboardScreen(
     var showProtocol by remember { mutableStateOf(false) }
     val shownWeight = weight ?: historyWeights.maxByOrNull { it.timestamp }
     val shownBp = bp ?: historyBp.maxByOrNull { it.timestamp }
-    // The reading before the shown one. A minute's gap skips a live reading's own Health Connect copy.
+    // The reading before the shown one. A minute's gap skips the live reading's own stored copy.
     val prevWeight = shownWeight?.let { s -> historyWeights.filter { it.timestamp < s.timestamp.minusSeconds(60) }.maxByOrNull { it.timestamp } }
     val prevBp = shownBp?.let { s -> historyBp.filter { it.timestamp < s.timestamp.minusSeconds(60) }.maxByOrNull { it.timestamp } }
     val bpMeasuring = statusText.takeIf { it.startsWith("Measuring BP") }
@@ -121,7 +120,6 @@ fun DashboardScreen(
             onRequestClientCertificate = onRequestClientCertificate,
             onPickSound = onPickSound,
             onSyncWatch = onSyncWatch,
-            onExportData = onExportData,
             onClearTodayData = onClearTodayData,
             onDismiss = { showSettings = false }
         )
@@ -279,7 +277,7 @@ fun DashboardScreen(
             if (historyWeights.isEmpty() && historyBp.isEmpty()) {
                 item {
                     Text(
-                        "Tap 'Sync All' to import existing measurements from Health Connect (Fitdays, VeSync, etc.).",
+                        "No readings yet: step on the scale or take a BP reading. Past readings come from the hub when it's reachable.",
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.outline
                     )

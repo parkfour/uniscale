@@ -13,8 +13,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Background hub sync while the app is closed: the same uploads as opening the app. Sends the
- * Gadgetbridge auto-export (sleep + workouts), Health Connect (today's steps, weigh-ins, BP; sleep
- * when there's no export) and queued supplement ticks. Runs as a WorkManager job, so there's no
+ * Gadgetbridge auto-export (sleep, workouts, steps and distance), the scale and BP readings this
+ * phone took (LocalReadings) and queued supplement ticks. Runs as a WorkManager job, so there's no
  * persistent notification. Uploads already sent are skipped by HubSyncManager, so each run only
  * sends what's new; failed ones aren't marked synced and are retried next run.
  */
@@ -30,13 +30,11 @@ class WatchSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val watch = gadgetbridge.read()
         watch?.nights?.forEach { hub.uploadSleepSession(it) }
         watch?.workouts?.forEach { hub.uploadWorkout(it) }
+        watch?.activity?.forEach { hub.uploadWatchActivity(it) }
 
-        // Health Connect reads return empty without the background-read permission (Android 14+).
-        val hc = HealthConnectManager(applicationContext)
-        hc.readTodayWatchActivity()?.let { hub.uploadWatchActivity(it) }
-        hc.readWeightHistory().forEach { hub.uploadWeight(it) }
-        hc.readBloodPressureHistory().forEach { hub.uploadBloodPressure(it) }
-        if (gadgetbridge.exportUri == null) hc.readSleepHistory().forEach { hub.uploadSleepSession(it) }
+        val readings = LocalReadings(applicationContext)
+        readings.weights().forEach { hub.uploadWeight(it) }
+        readings.bloodPressures().forEach { hub.uploadBloodPressure(it) }
 
         SupplementProtocol(applicationContext, hub).refresh()
         return Result.success()

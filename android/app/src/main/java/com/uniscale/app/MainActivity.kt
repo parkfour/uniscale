@@ -2,7 +2,6 @@ package com.uniscale.app
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -11,7 +10,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.health.connect.client.PermissionController
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,7 +24,7 @@ import com.uniscale.app.model.WeightData
 import com.uniscale.app.sync.GadgetbridgeExport
 import com.uniscale.app.sync.DoneSound
 import com.uniscale.app.sync.GarminSyncManager
-import com.uniscale.app.sync.HealthConnectManager
+import com.uniscale.app.sync.LocalReadings
 import com.uniscale.app.sync.HubSyncManager
 import com.uniscale.app.sync.PoiLookupService
 import com.uniscale.app.sync.WatchSyncWorker
@@ -45,7 +43,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var configManager: AppConfigManager
     private lateinit var hubSyncManager: HubSyncManager
     private lateinit var bleManager: BleManager
-    private lateinit var healthConnect: HealthConnectManager
+    private lateinit var localReadings: LocalReadings
     private lateinit var garminSync: GarminSyncManager
     private lateinit var gadgetbridge: GadgetbridgeExport
     private lateinit var protocol: SupplementProtocol
@@ -67,12 +65,6 @@ class MainActivity : ComponentActivity() {
         if (allGranted) {
             bleManager.startScan()
         }
-    }
-
-    private val healthPermissionLauncher = registerForActivityResult(
-        PermissionController.createRequestPermissionResultContract()
-    ) { granted ->
-        if (granted.isNotEmpty()) loadHistory()
     }
 
     // Gadgetbridge Settings → Auto export writes its database to a file the user picks; pick the same file here.
@@ -99,7 +91,7 @@ class MainActivity : ComponentActivity() {
         configManager = AppConfigManager(this)
         hubSyncManager = HubSyncManager(this, configManager)
         bleManager = BleManager(this, configManager)
-        healthConnect = HealthConnectManager(this)
+        localReadings = LocalReadings(this)
         garminSync = GarminSyncManager(this)
         gadgetbridge = GadgetbridgeExport(this)
         protocol = SupplementProtocol(this, hubSyncManager)
@@ -114,9 +106,7 @@ class MainActivity : ComponentActivity() {
         bleManager.onNewWeight = { weight ->
             DoneSound.play(this, configManager.config.value.doneSound, "weight")
             lifecycleScope.launch {
-                if (configManager.config.value.autoSyncHealthConnect) {
-                    healthConnect.writeWeight(weight)
-                }
+                localReadings.add(weight)
                 if (configManager.config.value.autoUploadHub) {
                     hubSyncManager.uploadWeight(weight)
                 }
@@ -128,9 +118,7 @@ class MainActivity : ComponentActivity() {
         bleManager.onNewBp = { bp ->
             DoneSound.play(this, configManager.config.value.doneSound, "bp")
             lifecycleScope.launch {
-                if (configManager.config.value.autoSyncHealthConnect) {
-                    healthConnect.writeBloodPressure(bp)
-                }
+                localReadings.add(bp)
                 if (configManager.config.value.autoUploadHub) {
                     hubSyncManager.uploadBloodPressure(bp)
                 }
@@ -163,9 +151,7 @@ class MainActivity : ComponentActivity() {
         }
 
         checkAndRequestPermissions()
-        requestHealthConnectPermissions()
         loadHistory()
-        handleIntent(intent)
 
         setContent {
             val config by configManager.config.collectAsState()
@@ -185,15 +171,10 @@ class MainActivity : ComponentActivity() {
                     onClearTodayData = {
                         lifecycleScope.launch {
                             bleManager.clearLatestReadings()
-                            val msg = healthConnect.deleteTodayRecords()
+                            localReadings.clearToday()
+                            val msg = "Cleared today's readings on this phone (the hub keeps its copy)"
                             loadHistory()
                             android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    onExportData = {
-                        lifecycleScope.launch {
-                            val msg = healthConnect.exportAllHealthConnectData()
-                            android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_LONG).show()
                         }
                     },
                     onRequestClientCertificate = { onSelected ->
@@ -250,34 +231,32 @@ class MainActivity : ComponentActivity() {
         loadCounterAndPlaces()
         lifecycleScope.launch {
             try {
-                val weights = healthConnect.readWeightHistory()
-                val bps = healthConnect.readBloodPressureHistory()
-                // With a Gadgetbridge export set, watch sleep comes straight from it, not Health Connect.
-                val watch = if (gadgetbridge.exportUri != null) gadgetbridge.read() else null
-                val sleeps = if (gadgetbridge.exportUri != null) {
-                    watch?.nights.orEmpty()
-                } else {
-                    healthConnect.readSleepHistory()
-                }
-                val activity = healthConnect.readTodayWatchActivity()
-                historyWeights.value = weights
-                historyBp.value = bps
-                historySleep.value = sleeps
-                watchActivity.value = activity
+                // Readings taken on this phone (kept until the hub has them) plus the hub's history.
+                val localWeights = localReadings.weights()
+                val localBps = localReadings.bloodPressures()
+                val watch = gadgetbridge.read()
+                historyWeights.value = localWeights
+                historyBp.value = localBps
+                historySleep.value = watch?.nights.orEmpty()
+                watchActivity.value = watch?.activity?.firstOrNull { it.date == java.time.LocalDate.now() }
                 if (configManager.config.value.autoUploadHub) {
-                    if (activity != null) {
-                        hubSyncManager.uploadWatchActivity(activity)
-                    }
-                    weights.forEach { w -> hubSyncManager.uploadWeight(w) }
-                    bps.forEach { b -> hubSyncManager.uploadBloodPressure(b) }
-                    sleeps.forEach { s -> hubSyncManager.uploadSleepSession(s) }
+                    localWeights.forEach { w -> hubSyncManager.uploadWeight(w) }
+                    localBps.forEach { b -> hubSyncManager.uploadBloodPressure(b) }
+                    watch?.activity?.forEach { a -> hubSyncManager.uploadWatchActivity(a) }
+                    watch?.nights?.forEach { s -> hubSyncManager.uploadSleepSession(s) }
                     watch?.workouts?.forEach { w -> hubSyncManager.uploadWorkout(w) }
                 }
+                historyWeights.value = mergeByTime(localWeights, hubSyncManager.fetchWeights()) { it.timestamp }
+                historyBp.value = mergeByTime(localBps, hubSyncManager.fetchBloodPressures()) { it.timestamp }
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Error loading history: ${e.message}")
             }
         }
     }
+
+    /** Newest first, one per second (the hub's copy of a local reading has the same timestamp). */
+    private fun <T> mergeByTime(local: List<T>, hub: List<T>, time: (T) -> java.time.Instant): List<T> =
+        (local + hub).distinctBy { time(it).epochSecond }.sortedByDescending(time)
 
     private fun syncWatch() {
         if (gadgetbridge.exportUri == null) {
@@ -400,32 +379,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestHealthConnectPermissions() {
-        lifecycleScope.launch {
-            val missing = healthConnect.missingPermissions()
-            if (missing.isNotEmpty()) healthPermissionLauncher.launch(missing)
-        }
-    }
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getBooleanExtra(Notifications.EXTRA_OPEN_CHAT, false)) showChat.value = true
-        handleIntent(intent)
     }
 
-    // `adb shell am start -n com.uniscale.app/.MainActivity --ez export true` dumps all Health
-    // Connect data to Downloads. The activity is exported (launcher), so only debug builds honour it,
-    // otherwise any installed app could trigger the dump.
-    private fun handleIntent(intent: Intent?) {
-        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        if (debuggable && intent?.getBooleanExtra("export", false) == true) {
-            lifecycleScope.launch {
-                val msg = healthConnect.exportAllHealthConnectData()
-                Log.i("MainActivity", "Export triggered by intent: $msg")
-            }
-        }
-    }
 
     override fun onDestroy() {
         super.onDestroy()

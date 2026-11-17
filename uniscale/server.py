@@ -2462,7 +2462,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     <div class="telemetry-card">
                         <div class="stat-label">Sync Pipeline</div>
                         <div class="telemetry-val" style="color: var(--accent-green); font-size: 18px;">Direct Local Link</div>
-                        <div class="stat-sub">Watch → Gadgetbridge → Health Connect → UniScale Hub</div>
+                        <div class="stat-sub">Watch → Gadgetbridge → UniScale Hub</div>
                     </div>
                 </div>
             `;

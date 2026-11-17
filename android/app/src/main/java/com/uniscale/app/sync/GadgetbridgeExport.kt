@@ -8,18 +8,27 @@ import android.database.sqlite.SQLiteException
 import android.net.Uri
 import android.util.Log
 import com.uniscale.app.model.SleepData
+import com.uniscale.app.model.WatchActivityData
 import com.uniscale.app.model.WorkoutData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
+import java.time.LocalDate
 import java.time.ZoneId
 
 /**
  * Reads the database file Gadgetbridge writes with Settings → Auto export. The user picks that file
- * once (system file picker); we keep read access to it across reboots. No Health Connect involved.
+ * once (system file picker); we keep read access to it across reboots. It's the app's only source of
+ * watch data: sleep, workouts, steps and distance.
  */
 /** What one read of the export yields, newest first. */
-data class GadgetbridgeData(val nights: List<SleepData>, val workouts: List<WorkoutData>)
+data class GadgetbridgeData(
+    val nights: List<SleepData>,
+    val workouts: List<WorkoutData>,
+    /** Steps and distance for today and yesterday (when the watch recorded any), today first. */
+    val activity: List<WatchActivityData> = emptyList()
+)
 
 class GadgetbridgeExport(private val context: Context) {
 
@@ -86,7 +95,10 @@ class GadgetbridgeExport(private val context: Context) {
                         startS, endS
                     ) { c -> (c.getLong(0) - startS).toInt() to c.getInt(1) })
                 }
-                GadgetbridgeData(nights, workouts)
+                val zone = ZoneId.systemDefault()
+                val today = LocalDate.now(zone)
+                val activity = listOf(today, today.minusDays(1)).mapNotNull { day -> dayActivity(db, day, zone) }
+                GadgetbridgeData(nights, workouts, activity)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Could not read Gadgetbridge export: ${e.message}")
@@ -94,6 +106,29 @@ class GadgetbridgeExport(private val context: Context) {
         } finally {
             copy.delete()
         }
+    }
+
+    /**
+     * Garmin's STEPS and DISTANCE_CM are running totals for the day (-1 = no reading), and the
+     * midnight sample still holds the day before's total, so a day is the largest value after its
+     * midnight up to and including the next one.
+     */
+    private fun dayActivity(db: SQLiteDatabase, day: LocalDate, zone: ZoneId): WatchActivityData? {
+        val start = day.atStartOfDay(zone).toEpochSecond()
+        val end = day.plusDays(1).atStartOfDay(zone).toEpochSecond()
+        val (steps, cm) = rows(
+            db,
+            "SELECT MAX(STEPS), MAX(DISTANCE_CM) FROM GARMIN_ACTIVITY_SAMPLE WHERE TIMESTAMP > ? AND TIMESTAMP <= ?",
+            start, end
+        ) { (it.longOrNull(0) ?: 0L) to (it.longOrNull(1) ?: 0L) }.firstOrNull() ?: return null
+        if (steps <= 0) return null
+        val km = if (cm > 0) cm / 100_000.0 else steps * 0.85582 / 1000.0  // Garmin's stride when no distance
+        return WatchActivityData(
+            steps = steps,
+            distanceKm = (km * 100).roundToInt() / 100f,
+            deviceName = "Garmin",
+            date = day
+        )
     }
 
     // A table that doesn't exist yet (e.g. no Garmin data so far) is just empty.
@@ -107,6 +142,7 @@ class GadgetbridgeExport(private val context: Context) {
     }
 
     private fun Cursor.intOrNull(i: Int): Int? = if (isNull(i)) null else getInt(i)
+    private fun Cursor.longOrNull(i: Int): Long? = if (isNull(i)) null else getLong(i)
 
     companion object {
         private const val KEY_URI = "export_uri"
