@@ -1,0 +1,29 @@
+[project]
+name = "uniscale"
+version = "0.1.0"
+description = "Unified health bridge for Bluetooth smart scales (Yunmai, Fitdays, VeSync), blood pressure monitors, and ECG (Viatom BP2, Omron) with sync to Garmin Connect and Health Connect / Google Fit."
+authors = [{ name = "P Park" }]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "bleak>=0.22.0",
+    "fastapi>=0.115.0",
+    "fitdecode>=0.11.0",
+    "garminconnect>=0.2.18",
+    "pydantic>=2.7.0",
+    "python-multipart>=0.0.32",
+    "uvicorn>=0.30.0",
+]
+
+[project.scripts]
+uniscale = "uniscale.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.2.0",
+]

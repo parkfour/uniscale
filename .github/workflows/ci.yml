@@ -1,0 +1,271 @@
+name: CI
+
+# Runs on both Gitea (where this repo is developed) and GitHub (its public
+# mirror). Only Gitea publishes the mirror: that job checks
+# github.server_url, so on GitHub just the checks (and CodeQL) run.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mirror script tests
+        run: sh tests/publish-mirror.sh
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Python tests
+        run: uv run pytest -q
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Android unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest
+
+  # On Gitea, every push to main builds a signed release APK and publishes it
+  # as the "latest" Gitea release, demoting whatever was "latest" before that
+  # to "previous" (reusing its already-built asset, no rebuild). Two releases
+  # = two stable download URLs. Every build is signed with the same key, so
+  # either APK installs over the other as an update.
+  #
+  # Needs these Gitea secrets:
+  #   RELEASE_TOKEN            Gitea access token with write access to this repo's releases
+  #   RELEASE_API_URL          this Gitea instance's API base, e.g. https://gitea.example.com/api/v1
+  #   KEYSTORE_B64             `base64 -w0 <keystore>` output
+  #   KEYSTORE_STORE_PASSWORD  keystore password
+  #   KEYSTORE_KEY_ALIAS       key alias
+  #   KEYSTORE_KEY_PASSWORD    key password
+  release:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.server_url != 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Restore signing key
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: sh ../scripts/restore-signing.sh
+
+      - name: Build release APK
+        working-directory: android
+        run: VERSION_CODE=$(git rev-list --count HEAD) ./gradlew assembleRelease
+
+      # Everything past here talks to the Gitea API directly (release
+      # assets aren't part of the standard Actions artifact model).
+      - name: Publish current/previous APK releases
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          API: ${{ secrets.RELEASE_API_URL }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -e
+          APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -1)
+          ASSET_NAME=UniScale.apk
+
+          auth="Authorization: token ${RELEASE_TOKEN}"
+          api() { curl -sS --fail-with-body -H "$auth" "$@"; }
+
+          # Prints field $2 ("id", "target_commitish" or "apk", the asset's
+          # download URL) of the release tagged $1, or nothing if there is
+          # none. Matches on the listing rather than /releases/tags/$1, which
+          # can't be trusted to find a release whose tag was renamed.
+          release() {
+            api "${API}/repos/${REPO}/releases?limit=50" | python3 -c "import json,sys
+          for r in json.load(sys.stdin):
+              if r['tag_name'] == sys.argv[1]:
+                  a = r['assets']
+                  print(r[sys.argv[2]] if sys.argv[2] != 'apk' else a[0]['browser_download_url'] if a else '')
+                  break" "$1" "$2"
+          }
+
+          publish() { # tag commit apk
+            id=$(api -X POST -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"$1\",\"target_commitish\":\"$2\",\"name\":\"$1 (${2::8})\",\"draft\":false,\"prerelease\":false}" \
+              "${API}/repos/${REPO}/releases" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+            api -X POST -F "attachment=@$3;filename=${ASSET_NAME}" \
+              "${API}/repos/${REPO}/releases/${id}/assets?name=${ASSET_NAME}" > /dev/null
+          }
+
+          # Keep the current "latest" APK to republish as "previous".
+          old_sha=$(release latest target_commitish)
+          old_apk=$(release latest apk)
+          [ -n "$old_apk" ] && api -L -o previous.apk "$old_apk"
+
+          # Gitea keeps a release's git tag when the release is deleted, and a
+          # new release reuses an existing tag rather than moving it to
+          # target_commitish, so both releases and both tags go before
+          # recreating them. Deleting a tag that doesn't exist is fine.
+          for tag in previous latest; do
+            id=$(release "$tag" id)
+            [ -n "$id" ] && api -X DELETE "${API}/repos/${REPO}/releases/${id}"
+            curl -s -o /dev/null -X DELETE -H "$auth" "${API}/repos/${REPO}/tags/${tag}"
+          done
+
+          [ -f previous.apk ] && publish previous "$old_sha" previous.apk
+          publish latest "$COMMIT_SHA" "$APK"
+
+  # GitHub only: each v* tag builds a signed release APK and attaches it to a
+  # GitHub Release of that tag. Tags reach GitHub through the publish job.
+  # Needs the KEYSTORE_B64 / KEYSTORE_STORE_PASSWORD / KEYSTORE_KEY_ALIAS /
+  # KEYSTORE_KEY_PASSWORD secrets on the GitHub repository (same key as Gitea's,
+  # so the signature matches). versionCode counts the mirror's commits, so it
+  # rises with each release but isn't comparable with the Gitea builds' numbers.
+  release-apk:
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v') && github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Restore signing key
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+        run: sh ../scripts/restore-signing.sh
+
+      - name: Build release APK
+        working-directory: android
+        run: VERSION_CODE=$(git rev-list --count HEAD) VERSION_NAME=${GITHUB_REF_NAME#v} ./gradlew assembleRelease
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          apk=UniScale-${GITHUB_REF_NAME}.apk
+          cp "$(find android/app/build/outputs/apk/release -name '*.apk' | head -1)" "$apk"
+          gh release create "$GITHUB_REF_NAME" "$apk" --title "$GITHUB_REF_NAME" --generate-notes
+
+  # Copies main, minus the paths in .gitdontforward, to main on the public
+  # GitHub mirror (scripts/publish-mirror.sh), and version tags along with
+  # it. Push main first and let this finish before pushing a tag.
+  # Skipped until the MIRROR_REPO and MIRROR_DEPLOY_KEY secrets are set;
+  # MIRROR_AUTHOR_NAME/EMAIL optionally replace the author on published
+  # commits by the emails in MIRROR_REPLACE_EMAILS (all commits if unset).
+  publish:
+    needs: verify
+    if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && github.server_url != 'https://github.com'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish to the public mirror
+        env:
+          MIRROR_REPO: ${{ secrets.MIRROR_REPO }}
+          MIRROR_DEPLOY_KEY: ${{ secrets.MIRROR_DEPLOY_KEY }}
+          MIRROR_AUTHOR_NAME: ${{ secrets.MIRROR_AUTHOR_NAME }}
+          MIRROR_AUTHOR_EMAIL: ${{ secrets.MIRROR_AUTHOR_EMAIL }}
+          MIRROR_REPLACE_EMAILS: ${{ secrets.MIRROR_REPLACE_EMAILS }}
+        run: |
+          if [ -z "$MIRROR_REPO" ] || [ -z "$MIRROR_DEPLOY_KEY" ]; then
+            echo "Mirror secrets not set; skipping"
+            exit 0
+          fi
+          key=$(mktemp)
+          printf '%s\n' "$MIRROR_DEPLOY_KEY" > "$key"
+          # GitHub's published SSH host key, so the push can't be intercepted.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$key.known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$key.known_hosts"
+          case "$GITHUB_REF" in
+            refs/tags/*) scripts/publish-mirror.sh --tags-only "$MIRROR_REPO" main ;;
+            *) scripts/publish-mirror.sh "$MIRROR_REPO" main ;;
+          esac
+
+  # On the public GitHub repository only: CodeQL code scanning of each push to
+  # main. Kotlin needs a real build (default setup can't read it), so this
+  # replaces default setup, which must stay off in the repository's settings.
+  codeql:
+    if: github.ref == 'refs/heads/main' && github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: java-kotlin
+            build-mode: manual
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        if: matrix.language == 'java-kotlin'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+        if: matrix.language == 'java-kotlin'
+        with:
+          packages: platform-tools
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Build debug APK
+        if: matrix.language == 'java-kotlin'
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - uses: github/codeql-action/analyze@v4

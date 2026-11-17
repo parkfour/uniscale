@@ -1,0 +1,112 @@
+# ==============================================================================
+# UniScale Configuration File
+# Unified offline-first health bridge & telemetry hub
+# ==============================================================================
+
+[general]
+# Logging verbosity: DEBUG, INFO, WARNING, ERROR
+log_level = "INFO"
+
+# Base directory for local metrics, JSONL files, and ECG recordings
+data_dir = "~/.config/uniscale"
+
+# Primary local storage format: "jsonl" or "sqlite"
+storage_backend = "jsonl"
+
+
+[server]
+# Interface and port for the self-hosted web dashboard & sync API.
+# Loopback by default (put a reverse proxy in front). If you bind 0.0.0.0,
+# set api_token too.
+host = "127.0.0.1"
+port = 8088
+
+# Optional external URL (if hosted behind a reverse proxy / domain)
+external_url = "https://health.example.com"
+
+# Optional shared secret. When set, every route except /health requires it,
+# as a Bearer token (Android app, daemon) or as the HTTP Basic password (browser).
+# api_token = "your-secure-token-here"
+
+
+[sync]
+# Upstream UniScale hub URL (used when the CLI daemon uploads to a remote server)
+remote_hub_url = ""
+
+# Optional client certificate for an upstream server that requires one
+client_cert = ""
+client_key = ""
+ca_cert = ""
+api_token = ""
+
+
+[devices]
+# Enable automatic BLE discovery of compatible smart health devices
+auto_scan = true
+
+# Enable or disable specific hardware drivers
+enable_yunmai = true
+enable_fitdays = true
+enable_vesync = true
+enable_viatom_bp2 = true
+enable_omron = true
+
+[devices.yunmai]
+# Send 0x02 handshake to force physical LED display to pounds instead of kg
+force_pounds = true
+
+[devices.fitdays]
+auto_tare = true
+
+# Optional: Specific known/paired devices to whitelist or alias
+# [[devices.known]]
+# name = "Primary Bathroom Scale"
+# address = "AA:BB:CC:DD:EE:01"
+# type = "yunmai"
+
+# [[devices.known]]
+# name = "Desk BP & ECG Cuff"
+# address = "AA:BB:CC:DD:EE:02"
+# type = "viatom_bp2"
+
+
+[ai]
+# OpenAI-compatible LLM server (Ollama, llama.cpp, ...) for the chat assistant. The prompt carries your whole
+# health profile, so keep this on a machine you control.
+endpoint = "http://localhost:11434"
+model = "gemma:latest"
+# name = "Dr. Gemma"   # what the assistant is called in the dashboard and the app
+# enabled = false      # hide the assistant everywhere (it is on whenever this section sets an endpoint)
+# thinking = false    # true lets thinking models reason first: slower, sometimes better on hard questions
+
+
+[profile]
+# Needed for chronological age in PhenoAge / ASCVD calculations
+# birth_year = 1980
+
+
+# Daily supplement regimen tracked by the dashboard checklist (optional)
+# [[supplements.stack]]
+# name = "Vitamin D3"
+# dosage = 2000
+# unit = "IU"
+# category = "vitamin"
+# frequency = "morning"
+# purpose = "Example entry"
+
+
+[owntracks]
+# Optional OwnTracks Recorder to read locations from. Each finished day, the hub fetches that day's
+# points and keeps the places where you stayed an hour or more (the points themselves aren't stored).
+# recorder_url = "https://location.example.com/owntracks"   # the Recorder's base URL (…/api/0/… under it)
+# user = ""        # Recorder user and device; leave empty if the Recorder has only one of each
+# device = ""
+# username = ""    # HTTP Basic login, if the Recorder is behind one
+# password = ""
+
+
+[legacy_cloud.garmin]
+# Optional legacy sync to Garmin Connect cloud (disabled by default for full privacy)
+enabled = false
+email = ""
+password = ""

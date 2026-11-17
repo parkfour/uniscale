@@ -1,0 +1,54 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# UniScale local runtime data
+*.log
+*.jsonl
+*.fit
+uniscale.toml
+!uniscale.example.toml
+# A server checkout's own settings and data (never tracked)
+/config.toml
+/data/
+.env
+
+# Android & Gradle
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+*.apk
+*.aab
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Graphify local runtime & cache
+graphify-out/.*
+graphify-out/cache/
+
+# Local tooling (kept on disk, not in git)
+.rtk/
+.agents/
+graphify-out/
+CLAUDE.md
+gadgetbridge.apk
+
+# Release signing material written by scripts/restore-signing.sh
+android/Signing/
+*.jks
+*.keystore
+
+# Device data extracts
+extracted_phone_data/
