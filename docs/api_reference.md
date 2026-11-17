@@ -341,14 +341,28 @@ Upload raw DNA text dump (`.txt`) for immediate processing.
 The signed-in user's profile, stored as `profile.json` next to their vault:
 ```json
 {"name": "Alex", "date_of_birth": "1980-06-15", "birth_year": 1980, "sex": "female",
- "smoker": false, "diabetic": false, "bp_treated": false}
+ "smoker": false, "diabetic": false, "bp_treated": false,
+ "counter": {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}}
 ```
+`counter` defines the daily counter tile (up to 8 distinct buttons of at most 20 characters); `null` means no tile.
 `name` is shown in the dashboard header and Dr. Gemma's greeting. With `date_of_birth` set, ages are exact on each
 lab date and `birth_year` follows it; `birth_year` alone still works for anyone who prefers not to give the full
 date. `sex` is `"male"`, `"female"` or `null`; 10-year ASCVD risk is `null` until it is set. `PUT` replaces the
-whole profile (`422` for a date of birth in the future or before 1900, an out-of-range `birth_year`, or an
+whole profile (`422` for a malformed `counter`, a date of birth in the future or before 1900, an out-of-range `birth_year`, or an
 unknown `sex`). In single-user mode, `[profile]`
 in `config.toml` supplies defaults for fields the saved profile doesn't set.
+
+#### `GET /api/counter` / `POST /api/counter`
+The profile's counter set and today's counts (`?date=YYYY-MM-DD` for another day). Each element has a `key` made
+from its label (`"D(out)"` → `"d_out"`); counts, totals and history are keyed by it:
+```json
+{"title": "D Tracker", "elements": [{"key": "d_out", "label": "D(out)"}, {"key": "d_in", "label": "D(in)"}],
+ "date": "2026-11-17", "counts": {"d_out": 2, "d_in": 1}, "totals": {"d_out": 40, "d_in": 31},
+ "daily_history": [{"date": "2026-11-17", "counts": {"d_out": 2, "d_in": 1}, "total": 3}], "history": [...]}
+```
+`POST {"item": "D(out)", "delta": 1}` taps one counter (by key or label; `delta` defaults to 1, counts never go
+below 0); `POST {"counts": {"d_out": 3}, "date": "2026-11-10"}` sets a day. Unknown counters are a `422`.
+`GET /api/counter/history?days=30` returns the daily history; `POST /api/counter/history {"entries": [{"date": ..., "counts": {...}}]}` imports past days.
 
 #### `POST /api/import/dna` (multipart/form-data)
 Used by the dashboard's **📥 Import** dialog (DNA). Fields:
