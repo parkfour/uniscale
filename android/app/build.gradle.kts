@@ -20,7 +20,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.uniscale.app"
+        applicationId = "com.parkfour.uniscale"
         minSdk = 28
         targetSdk = 35
         // CI passes the commit count so every published APK is an upgrade.
