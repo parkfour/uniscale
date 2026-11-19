@@ -917,7 +917,8 @@ def chat_endpoint(req: ChatRequest):
     msgs = [{"role": m.role, "content": m.content} for m in req.messages]
     # The LLM endpoint comes only from config: the prompt carries the whole health profile.
     return chat_with_agent(msgs, endpoint=config.ai.endpoint, model=config.ai.model, db_path=get_db_path(),
-                           continue_reply=req.continue_reply, thinking=config.ai.thinking)
+                           continue_reply=req.continue_reply, thinking=config.ai.thinking,
+                           context_tokens=config.ai.context_tokens)
 
 
 ICONS_DIR = os.path.join(os.path.dirname(__file__), "static", "icons")

@@ -96,6 +96,13 @@ def build_health_profile(db_path: Optional[str] = None) -> Dict[str, Any]:
         "genomics": genomics_data
     }
 
+    # Counters, places and health day by day, and the correlations between them
+    try:
+        from uniscale.patterns import build_patterns
+        profile["patterns"] = build_patterns(path, records)
+    except Exception as e:  # never let this cost the chat its whole dossier
+        logger.warning(f"Couldn't build the daily patterns: {e}")
+
     if activities:
         recent_7 = activities[-7:]
         steps_7 = [a.get("steps", 0) for a in recent_7 if a.get("steps")]
@@ -108,10 +115,13 @@ def build_health_profile(db_path: Optional[str] = None) -> Dict[str, Any]:
     return profile
 
 
-def generate_health_summary_prompt(profile: Dict[str, Any]) -> str:
+def generate_health_summary_prompt(profile: Dict[str, Any], log_days: int = 30) -> str:
     """
-    Constructs an extensive clinical dossier formatted for Gemma 4 clinical analysis.
+    Constructs an extensive clinical dossier formatted for Gemma 4 clinical analysis, with the last
+    `log_days` days of the daily log (the patterns always cover the full log).
     """
+    from uniscale.patterns import patterns_prompt
+    patterns_text = patterns_prompt(profile.get("patterns") or {}, log_days)
     w_latest = profile.get("weights", {}).get("latest") or {}
     bp_latest = profile.get("blood_pressure", {}).get("latest") or {}
     ecg_latest = profile.get("ecg", {}).get("latest") or {}
@@ -257,6 +267,8 @@ def generate_health_summary_prompt(profile: Dict[str, Any]) -> str:
 {gen_lines}
 {trio_lines}
 
+{patterns_text}
+
 How to answer:
 - Start with the answer itself. No greeting, no thanks, no compliments, no "great question", and don't restate the question or re-introduce yourself in later turns.
 - Don't recite the dossier back. Quote a number only where it drives a conclusion ("LDL 142 mg/dL, so ...").
@@ -334,15 +346,16 @@ def query_llm(
 
 # ponytail: fixed cap so one answer can't hog a shared GPU box; a cut-off reply offers "Continue".
 CHAT_MAX_TOKENS = 2048
-# Smallest context window the chat expects from the server (llama.cpp -c). A long conversation drops its
-# oldest turns to stay inside it, leaving room for the reply.
+# Context window the chat assumes when [ai] context_tokens isn't set (llama.cpp -c per slot). A long
+# conversation drops its oldest turns to stay inside it, leaving room for the reply.
 CHAT_CONTEXT_TOKENS = 8192
+LONG_LOG_CONTEXT = 16384  # from this context size up, the prompt carries 90 days of the daily log, else 30
 CHARS_PER_TOKEN = 3  # measured ~3.0 on the health dossier with Gemma's tokenizer; errs on the safe side
 
 
-def _fit_context(chat: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def _fit_context(chat: List[Dict[str, str]], context_tokens: int = CHAT_CONTEXT_TOKENS) -> List[Dict[str, str]]:
     """Keeps the system message and as many of the latest turns as fit, starting on a user turn."""
-    budget = (CHAT_CONTEXT_TOKENS - CHAT_MAX_TOKENS - 256) * CHARS_PER_TOKEN - len(chat[0]["content"])
+    budget = (context_tokens - CHAT_MAX_TOKENS - 256) * CHARS_PER_TOKEN - len(chat[0]["content"])
     turns = chat[1:]
     while len(turns) > 1 and (sum(len(m["content"]) for m in turns) > budget or turns[0]["role"] != "user"):
         turns = turns[1:]
@@ -359,7 +372,8 @@ def chat_with_agent(
     model: str = "gemma:latest",
     db_path: Optional[str] = None,
     continue_reply: bool = False,
-    thinking: bool = False
+    thinking: bool = False,
+    context_tokens: int = CHAT_CONTEXT_TOKENS
 ) -> Dict[str, Any]:
     """
     Handles interactive dialogue with Dr. Gemma, injecting full patient telemetry.
@@ -376,12 +390,13 @@ def chat_with_agent(
 
     # A real conversation: the dossier and instructions as the system message, then the turns as they
     # happened, so the model continues it instead of starting a fresh consultation every time.
-    chat = [{"role": "system", "content": generate_health_summary_prompt(profile)}]
+    log_days = 90 if context_tokens >= LONG_LOG_CONTEXT else 30
+    chat = [{"role": "system", "content": generate_health_summary_prompt(profile, log_days)}]
     chat += [{"role": "assistant" if m.get("role") == "assistant" else "user", "content": m.get("content", "")}
              for m in messages if m.get("content")]
     if continue_reply:
         chat.append({"role": "user", "content": CONTINUE_INSTRUCTION})
-    chat = _fit_context(chat)
+    chat = _fit_context(chat, context_tokens)
 
     try:
         answer, truncated = query_chat(chat, endpoint=endpoint, model=model, timeout=240,

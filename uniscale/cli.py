@@ -524,7 +524,8 @@ def cmd_chat(args):
     db_path = vault_db_path(cfg)
     query = " ".join(args.query) if args.query else "Provide a clinical summary of my longevity biomarkers and recovery."
     print(f"Querying Dr. Gemma: '{query}'...")
-    res = chat_with_agent([{"role": "user", "content": query}], endpoint=endpoint, model=model, db_path=db_path)
+    res = chat_with_agent([{"role": "user", "content": query}], endpoint=endpoint, model=model, db_path=db_path,
+                          thinking=cfg.ai.thinking, context_tokens=cfg.ai.context_tokens)
     print(f"\n[{res['engine']}]\n")
     print(res["reply"])
 

@@ -160,6 +160,7 @@ auto_tare = true
 # health profile, so keep this on a machine you control.
 endpoint = "http://localhost:11434"
 model = "gemma:latest"
+# context_tokens = 8192  # the server's context per request (llama.cpp -c per slot); 16384+ sends 90 days of daily log
 
 
 [profile]
