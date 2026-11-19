@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -881,7 +882,7 @@ private const val PATTERNS_FOLDED = 3
  * strongest few; tapping shows them all.
  */
 @Composable
-fun PatternsTile(p: PatternsState, assistantName: String?, modifier: Modifier = Modifier) {
+fun PatternsTile(p: PatternsState, assistantName: String?, onRefresh: () -> Unit, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     val teal = Color(0xFF14B8A6)
     ElevatedCard(
@@ -896,6 +897,9 @@ fun PatternsTile(p: PatternsState, assistantName: String?, modifier: Modifier = 
                 Spacer(modifier = Modifier.weight(1f))
                 Badge(containerColor = teal.copy(alpha = 0.2f)) {
                     Text("${p.days} days", color = teal, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh patterns", tint = teal, modifier = Modifier.size(18.dp))
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
