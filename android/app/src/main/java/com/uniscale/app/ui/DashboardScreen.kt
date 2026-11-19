@@ -30,6 +30,7 @@ import com.uniscale.app.config.AppConfigManager
 import com.uniscale.app.model.CounterState
 import com.uniscale.app.model.DiscoveredDevice
 import com.uniscale.app.model.DwellPlace
+import com.uniscale.app.model.PatternsState
 import com.uniscale.app.model.WatchActivityData
 import com.uniscale.app.sync.Dose
 import com.uniscale.app.sync.HubSyncManager
@@ -55,6 +56,7 @@ fun DashboardScreen(
     onShowChat: (Boolean) -> Unit = {},
     counter: CounterState = CounterState(),
     dwellPlaces: List<DwellPlace> = emptyList(),
+    patterns: PatternsState = PatternsState(),
     onAdjustCounter: (String, Int) -> Unit = { _, _ -> },
     onAssignPoi: (DwellPlace, String) -> Unit = { _, _ -> },
     onDeletePlace: (DwellPlace) -> Unit = {},
@@ -249,6 +251,11 @@ fun DashboardScreen(
                         }
                     }
                 )
+            }
+
+            // Patterns the hub found between the counters, places and health (once there's a log)
+            if (patterns.loggedDays > 0) {
+                item { PatternsTile(patterns, assistantName) }
             }
 
             // Imported History Header

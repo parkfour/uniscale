@@ -57,6 +57,17 @@ def test_daily_log_and_next_day_pattern(tmp_path, monkeypatch):
     assert 'D(out), D(in) are how many times a day the person tapped each counter of their "D Tracker"' in text
 
 
+def test_patterns_endpoint_gives_plain_lines(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import uniscale.server as server
+    vault = _vault(tmp_path)
+    monkeypatch.setattr("uniscale.patterns.date", type("D", (date,), {"today": staticmethod(lambda: TODAY)}))
+    monkeypatch.setattr(server, "get_db_path", lambda: vault)
+    body = TestClient(server.app).get("/api/patterns").json()
+    assert body["days"] == 90 and body["logged_days"] == 20
+    assert body["patterns"][0]["text"] == "More D(out) → higher next-day systolic BP (132 vs 122.8; r +1.00, 19 days)"
+
+
 def test_log_days_trims_the_table_but_not_the_patterns(tmp_path, monkeypatch):
     vault = _vault(tmp_path, days=40)
     monkeypatch.setattr("uniscale.patterns.date", type("D", (date,), {"today": staticmethod(lambda: TODAY)}))

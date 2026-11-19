@@ -697,6 +697,20 @@ def post_owntracks_points(req: BatchLocationsRequest):
     return {"status": "saved", "count": len(saved)}
 
 
+@app.get("/api/patterns")
+def get_patterns():
+    """Correlations between the counters, places and health metrics over the last 90 days (see uniscale.patterns)."""
+    from uniscale.patterns import DAYS, build_patterns, describe
+    from uniscale.readings import load_vault
+    db = get_db_path()
+    data = build_patterns(db, load_vault(db))
+    return {
+        "days": DAYS,
+        "logged_days": len(data["rows"]),
+        "patterns": [dict(p, text=describe(p)) for p in data["patterns"]],
+    }
+
+
 @app.get("/api/places")
 def get_places(day: Optional[str] = "previous", date: Optional[str] = None, include_deleted: bool = False,
                include_home: bool = False):
@@ -1634,6 +1648,19 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <div id="counter-elements" style="display: flex; flex-wrap: wrap; justify-content: space-around; align-items: center; gap: 8px; margin-top: 10px;"></div>
                 <div id="counter-week" style="display: flex; gap: 6px; justify-content: space-between; margin-top: 12px;"></div>
                 <div class="metric-sub" style="margin-top: 12px; text-align: center;" id="counter-footer"></div>
+            </div>
+
+            <!-- Patterns: correlations the hub found between counters, places and health (hidden until there's a log) -->
+            <div class="card" id="patterns-card" style="border-top: 3px solid #14b8a6; display: none;">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span style="color: #14b8a6; font-size: 18px;">●</span>
+                        Patterns
+                    </span>
+                    <span class="badge" id="patterns-badge" style="background: rgba(20, 184, 166, 0.15); color: #14b8a6; border-color: rgba(20, 184, 166, 0.3);">90 days</span>
+                </div>
+                <ul id="patterns-list" style="margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5;"></ul>
+                <div class="metric-sub" style="margin-top: 8px;">Correlations, not causes. Ask <span class="assistant-name">Dr. Gemma</span> what they mean.</div>
             </div>
 
             <!-- Dwell Places (>1 hr Yesterday) Card -->
@@ -3876,6 +3903,21 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             renderCounterWeek(c);
         }
 
+        async function loadPatterns() {
+            try {
+                const res = await fetch('/api/patterns');
+                if (!res.ok) return;
+                const d = esc(await res.json());
+                const card = document.getElementById('patterns-card');
+                card.style.display = d.logged_days ? '' : 'none';
+                document.getElementById('patterns-badge').innerText = `${d.days} days`;
+                const shown = (d.patterns || []).slice(0, 6);
+                document.getElementById('patterns-list').innerHTML = shown.length
+                    ? shown.map(p => `<li>${p.text}</li>`).join('')
+                    : '<li style="list-style: none; margin-left: -18px; color: var(--text-muted);">Nothing strong enough yet: patterns need at least 8 days of data.</li>';
+            } catch (e) { /* the card stays as it was */ }
+        }
+
         async function postCounter(body) {
             const res = await fetch('/api/counter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -4894,6 +4936,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 
         loadSummary();
         loadHistory();
+        loadPatterns();
+        setInterval(loadPatterns, 10 * 60 * 1000);  // reads the whole vault, so not on the 15 s refresh
 
         // Hide the chat entry points when the hub has no assistant; show its configured name.
         fetch('/api/assistant').then(r => r.json()).then(a => {

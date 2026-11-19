@@ -3,6 +3,7 @@ package com.uniscale.app.sync
 import android.util.Log
 import com.uniscale.app.config.AppConfigManager
 import com.uniscale.app.model.BloodPressureData
+import com.uniscale.app.model.PatternsState
 import com.uniscale.app.model.CounterState
 import com.uniscale.app.model.DwellPlace
 import com.uniscale.app.model.EcgData
@@ -376,6 +377,8 @@ class HubSyncManager(
         val json = request(path) ?: return null
         return CounterState.fromJson(json)
     }
+
+    suspend fun fetchPatterns(): PatternsState? = request("/api/patterns")?.let(PatternsState::fromJson)
 
     suspend fun adjustCounter(item: String, delta: Int, date: String? = null): CounterState? {
         val body = JSONObject().apply {

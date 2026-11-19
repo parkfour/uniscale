@@ -236,6 +236,23 @@ data class CounterState(
     }
 }
 
+/** Correlations the hub found between counters, places and health; `lines` are ready to show. */
+data class PatternsState(
+    val days: Int = 90,
+    val loggedDays: Int = 0,
+    val lines: List<String> = emptyList()
+) {
+    companion object {
+        /** From the hub's /api/patterns response. */
+        fun fromJson(json: JSONObject): PatternsState {
+            val arr = json.optJSONArray("patterns")
+            val lines = if (arr == null) emptyList() else
+                (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("text")?.takeIf(String::isNotBlank) }
+            return PatternsState(json.optInt("days", 90), json.optInt("logged_days", 0), lines)
+        }
+    }
+}
+
 data class DwellPlace(
     val id: String,
     val date: String,
