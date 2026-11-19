@@ -1658,6 +1658,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         Patterns
                     </span>
                     <span class="badge" id="patterns-badge" style="background: rgba(20, 184, 166, 0.15); color: #14b8a6; border-color: rgba(20, 184, 166, 0.3);">90 days</span>
+                    <button id="patterns-refresh" class="ai-header-btn plain" style="font-size: 11px; padding: 2px 8px; margin-left: 6px;" onclick="loadPatterns()" title="Recompute the patterns from the latest data">Refresh</button>
                 </div>
                 <ul id="patterns-list" style="margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5;"></ul>
                 <div class="metric-sub" style="margin-top: 8px;">Correlations, not causes. Ask <span class="assistant-name">Dr. Gemma</span> what they mean.</div>
@@ -3904,6 +3905,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         }
 
         async function loadPatterns() {
+            const btn = document.getElementById('patterns-refresh');
+            btn.disabled = true;
+            btn.innerText = 'Refreshing…';
             try {
                 const res = await fetch('/api/patterns');
                 if (!res.ok) return;
@@ -3916,6 +3920,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     ? shown.map(p => `<li>${p.text}</li>`).join('')
                     : '<li style="list-style: none; margin-left: -18px; color: var(--text-muted);">Nothing strong enough yet: patterns need at least 8 days of data.</li>';
             } catch (e) { /* the card stays as it was */ }
+            btn.disabled = false;
+            btn.innerText = 'Refresh';
         }
 
         async function postCounter(body) {
@@ -4936,8 +4942,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 
         loadSummary();
         loadHistory();
-        loadPatterns();
-        setInterval(loadPatterns, 10 * 60 * 1000);  // reads the whole vault, so not on the 15 s refresh
+        loadPatterns();  // reads the whole vault, so only on load and from the card's Refresh button
 
         // Hide the chat entry points when the hub has no assistant; show its configured name.
         fetch('/api/assistant').then(r => r.json()).then(a => {

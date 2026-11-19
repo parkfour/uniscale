@@ -62,6 +62,7 @@ fun DashboardScreen(
     onDeletePlace: (DwellPlace) -> Unit = {},
     onLookupPois: (DwellPlace) -> Unit = {},
     onRefreshPlaces: () -> Unit = {},
+    onRefreshPatterns: () -> Unit = {},
     onStartScan: () -> Unit,
     onStopScan: () -> Unit
 ) {
@@ -255,7 +256,7 @@ fun DashboardScreen(
 
             // Patterns the hub found between the counters, places and health (once there's a log)
             if (patterns.loggedDays > 0) {
-                item { PatternsTile(patterns, assistantName) }
+                item { PatternsTile(patterns, assistantName, onRefreshPatterns) }
             }
 
             // Imported History Header

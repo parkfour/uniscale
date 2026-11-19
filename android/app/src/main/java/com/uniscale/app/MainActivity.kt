@@ -190,6 +190,7 @@ class MainActivity : ComponentActivity() {
                     onDeletePlace = { place -> deletePlace(place) },
                     onLookupPois = { place -> lookupPoisForPlace(place) },
                     onRefreshPlaces = { loadCounterAndPlaces() },
+                    onRefreshPatterns = { refreshPatterns() },
                     onStartScan = { checkAndRequestPermissions(forceRestart = true) },
                     onStopScan = { bleManager.stopScan() }
                 )
@@ -283,6 +284,14 @@ class MainActivity : ComponentActivity() {
             val places = hubSyncManager.fetchPlaces(date = "all")
             // Name suggestions are looked up on request only (the POI button), not for every place on each open.
             if (places.isNotEmpty()) dwellPlaces.value = places
+        }
+    }
+
+    private fun refreshPatterns() {
+        lifecycleScope.launch {
+            val p = hubSyncManager.fetchPatterns()
+            if (p != null) patterns.value = p
+            toast(if (p != null) "Patterns refreshed" else "Couldn't reach the hub")
         }
     }
 
