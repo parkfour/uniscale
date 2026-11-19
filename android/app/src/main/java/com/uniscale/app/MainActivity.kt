@@ -19,6 +19,7 @@ import com.uniscale.app.config.AppConfigManager
 import com.uniscale.app.model.BloodPressureData
 import com.uniscale.app.model.CounterState
 import com.uniscale.app.model.DwellPlace
+import com.uniscale.app.model.PatternsState
 import com.uniscale.app.model.SleepData
 import com.uniscale.app.model.WeightData
 import com.uniscale.app.sync.GadgetbridgeExport
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
     private val watchActivity = mutableStateOf<com.uniscale.app.model.WatchActivityData?>(null)
     private val counterState = mutableStateOf(CounterState())
     private val dwellPlaces = mutableStateOf<List<DwellPlace>>(emptyList())
+    private val patterns = mutableStateOf(PatternsState())
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -182,6 +184,7 @@ class MainActivity : ComponentActivity() {
                     onShowChat = { showChat.value = it },
                     counter = counterState.value,
                     dwellPlaces = dwellPlaces.value,
+                    patterns = patterns.value,
                     onAdjustCounter = { item, delta -> adjustCounter(item, delta) },
                     onAssignPoi = { place, poi -> assignPoi(place, poi) },
                     onDeletePlace = { place -> deletePlace(place) },
@@ -272,6 +275,9 @@ class MainActivity : ComponentActivity() {
             if (c != null) {
                 counterState.value = c
             }
+        }
+        lifecycleScope.launch {
+            hubSyncManager.fetchPatterns()?.let { patterns.value = it }
         }
         lifecycleScope.launch {
             val places = hubSyncManager.fetchPlaces(date = "all")

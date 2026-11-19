@@ -68,4 +68,17 @@ class CounterAndPlacesTest {
         val parsed = AppConfig.fromJson(json)
         assertEquals("AIzaSyTestKey123", parsed.googleMapsApiKey)
     }
+
+    @Test
+    fun `patterns from the hub keep their lines in order`() {
+        val json = JSONObject("""{"days": 90, "logged_days": 42, "patterns": [
+            {"text": "More D(out) → higher next-day systolic BP (129.7 vs 124.1; r +0.52, 13 days)", "r": 0.52},
+            {"text": "", "r": 0.4},
+            {"text": "Going to Ambrosia → lower same-day diastolic BP (76 vs 84.5; r -0.62, 12 days)"}]}""")
+        val p = com.uniscale.app.model.PatternsState.fromJson(json)
+        assertEquals(42, p.loggedDays)
+        assertEquals(2, p.lines.size)
+        assertTrue(p.lines[0].startsWith("More D(out)"))
+        assertEquals(0, com.uniscale.app.model.PatternsState.fromJson(JSONObject("{}")).loggedDays)
+    }
 }

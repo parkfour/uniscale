@@ -399,6 +399,17 @@ dashboard show their chat buttons only when `available` is true. It is true when
 `endpoint` (or `enabled = true`), and false on a fresh install or with `enabled = false`; `name` comes from
 `[ai] name` (default "Dr. Gemma").
 
+#### `GET /api/patterns`
+The correlations the hub found over the last 90 days between the profile's counters, hours away from home, the
+places stayed at and the health metrics (the same ones the chat assistant gets), strongest first. Each has
+`driver`, `metric`, `when` ("same day" / "next day"), `r`, `days`, `avg_high` / `avg_low` (the metric on high vs
+low driver days) and `text`, a ready-to-show line. `logged_days` is how many of the 90 days have any data.
+```json
+{"days": 90, "logged_days": 90, "patterns": [{"driver": "hours away from home", "metric": "systolic BP",
+  "when": "next day", "r": 0.52, "days": 13, "avg_high": 129.7, "avg_low": 124.1,
+  "text": "More hours away from home → higher next-day systolic BP (129.7 vs 124.1; r +0.52, 13 days)"}]}
+```
+
 #### `POST /api/chat`
 Returns 404 when no assistant is set up, so nothing is sent to a model.
 Query local LLM (via Ollama or custom local endpoint) with automatic clinical context generation from your health vault.

@@ -175,6 +175,15 @@ def find_patterns(log: Dict[str, Any]) -> List[Dict[str, Any]]:
     return found[:MAX_PATTERNS]
 
 
+def describe(p: Dict[str, Any]) -> str:
+    """One plain line for a pattern, e.g. "More D(out) → higher next-day systolic BP (129.7 vs 124.1; r +0.52, 13 days)"."""
+    going = p["driver"].startswith("going to")
+    who = ("G" + p["driver"][1:]) if going else f"More {p['driver']}"
+    way = "higher" if p["avg_high"] > p["avg_low"] else "lower" if p["avg_high"] < p["avg_low"] else "unchanged"
+    return (f"{who} → {way} {p['when'].replace(' ', '-')} {p['metric']} "
+            f"({p['avg_high']:g} vs {p['avg_low']:g}; r {p['r']:+.2f}, {p['days']} days)")
+
+
 def build_patterns(db_path: str, records: List[Dict[str, Any]]) -> Dict[str, Any]:
     log = daily_log(db_path, records)
     return {**log, "patterns": find_patterns(log)}

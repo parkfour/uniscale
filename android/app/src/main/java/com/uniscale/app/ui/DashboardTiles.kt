@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Remove
@@ -36,6 +37,7 @@ import com.uniscale.app.model.BloodPressureData
 import com.uniscale.app.model.CounterState
 import com.uniscale.app.model.DwellPlace
 import com.uniscale.app.model.EcgData
+import com.uniscale.app.model.PatternsState
 import com.uniscale.app.model.SleepData
 import com.uniscale.app.model.WatchActivityData
 import com.uniscale.app.model.WeightData
@@ -869,5 +871,48 @@ private fun openMap(context: android.content.Context, place: DwellPlace) {
         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
     } catch (e: android.content.ActivityNotFoundException) {
         android.widget.Toast.makeText(context, "No maps app installed", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+private const val PATTERNS_FOLDED = 3
+
+/**
+ * Full-width: the correlations the hub found between the counters, places and health. Shows the
+ * strongest few; tapping shows them all.
+ */
+@Composable
+fun PatternsTile(p: PatternsState, assistantName: String?, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
+    val teal = Color(0xFF14B8A6)
+    ElevatedCard(
+        modifier = modifier.fillMaxWidth().clickable { open = !open },
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Insights, contentDescription = null, tint = teal, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Patterns", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Spacer(modifier = Modifier.weight(1f))
+                Badge(containerColor = teal.copy(alpha = 0.2f)) {
+                    Text("${p.days} days", color = teal, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            if (p.lines.isEmpty()) {
+                Text("Nothing strong enough yet: patterns need at least 8 days of data.",
+                    fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
+                return@Column
+            }
+            val shown = if (open) p.lines else p.lines.take(PATTERNS_FOLDED)
+            shown.forEach { Text("• $it", fontSize = 13.sp, modifier = Modifier.padding(vertical = 2.dp)) }
+            val more = p.lines.size - shown.size
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                if (more > 0) "$more more: tap to show" else
+                    "Correlations, not causes." + (assistantName?.let { " Ask $it what they mean." } ?: ""),
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.outline
+            )
+        }
     }
 }
