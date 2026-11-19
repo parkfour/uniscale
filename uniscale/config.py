@@ -111,6 +111,9 @@ class AiConfig(BaseModel):
     # Let "thinking" models (Gemma 4, Qwen 3, ...) reason before answering. Off by default: on a small
     # local box the hidden reasoning costs several times the tokens and time of the answer itself.
     thinking: bool = False
+    # The server's context window per request, in tokens (llama.cpp -c per slot). Sets how much chat
+    # history and daily log fit in each request; 16384 or more carries 90 days of the log, else 30.
+    context_tokens: int = Field(default=8192, ge=4096)
 
     @property
     def available(self) -> bool:
@@ -312,6 +315,7 @@ auto_tare = true
 endpoint = "http://localhost:11434"
 model = "gemma:latest"
 # thinking = false    # true lets thinking models reason first: slower, sometimes better on hard questions
+# context_tokens = 8192  # the server's context per request (llama.cpp -c per slot); 16384+ sends 90 days of daily log
 
 
 [profile]

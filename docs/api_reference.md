@@ -411,6 +411,10 @@ Query local LLM (via Ollama or custom local endpoint) with automatic clinical co
   }
   ```
 * The LLM endpoint and model come from the `[ai]` section of the server config; requests cannot choose them.
+* The context sent with each chat also carries a day-by-day log (counters, hours away from home and the places
+  stayed at, weight, BP, resting HR, sleep, steps) and the correlations the hub computed between them, same day and
+  next day, so the model explains real figures rather than working them out. `[ai] context_tokens` (default 8192)
+  is the server's context per request; at 16384 or more the log covers 90 days, otherwise 30.
 
 ---
 
