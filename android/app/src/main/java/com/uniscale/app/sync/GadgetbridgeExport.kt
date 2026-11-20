@@ -83,17 +83,25 @@ class GadgetbridgeExport(private val context: Context) {
                 ) {
                     GadgetbridgeWorkouts.fromSummary(
                         it.getLong(0), it.getLong(1), it.getInt(2), it.getString(3), it.getString(4)
-                    )
-                }.map { w ->
-                    // Heart rate during the workout from the watch's activity samples (TIMESTAMP is in seconds).
+                    ) to it.getLong(1) / 1000
+                }.map { (w, endS) ->
+                    // Heart rate during the workout, and for a while after it to see how fast it falls,
+                    // from the watch's activity samples (TIMESTAMP is in seconds).
                     val startS = w.startTime.epochSecond
-                    val endS = startS + w.durationSeconds.toLong() + 60
-                    w.copy(hrSamples = rows(
+                    val samples = rows(
                         db,
                         "SELECT TIMESTAMP, HEART_RATE FROM GARMIN_ACTIVITY_SAMPLE " +
                             "WHERE TIMESTAMP BETWEEN ? AND ? AND HEART_RATE BETWEEN 30 AND 250 ORDER BY TIMESTAMP",
-                        startS, endS
-                    ) { c -> (c.getLong(0) - startS).toInt() to c.getInt(1) })
+                        startS, endS + GadgetbridgeWorkouts.RECOVERY_WINDOW_S
+                    ) { c -> (c.getLong(0) - startS).toInt() to c.getInt(1) }
+                    val end = (endS - startS).toInt()
+                    val recovery = GadgetbridgeWorkouts.hrRecovery(samples, end)
+                    w.copy(
+                        hrSamples = samples,
+                        extras = w.extras + recovery.mapValues { it.value.toDouble() },
+                        recoveryPending = "hr_recovery_2min" !in recovery &&
+                            System.currentTimeMillis() / 1000 - endS < GadgetbridgeWorkouts.RECOVERY_WAIT_S
+                    )
                 }
                 val zone = ZoneId.systemDefault()
                 val today = LocalDate.now(zone)

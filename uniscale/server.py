@@ -299,6 +299,11 @@ def get_summary():
     from uniscale.places import get_dwell_places
     places_state = get_dwell_places(get_db_path(), target_date="all")
 
+    if latest_workout:
+        from uniscale.workout_records import badges, workout_records
+        latest_workout = {**latest_workout, "badges": badges(
+            latest_workout, workout_records([r for r in records if r.get("type") == "workout"]))}
+
     return {
         "latest_weight": latest_weight,
         "latest_bp": latest_bp,
@@ -540,9 +545,13 @@ def get_workouts(per_sport: int = 5, sport: Optional[str] = None, offset: int = 
     """
     Device-tracked workouts: the latest one, and the last `per_sport` of each sport (most recent sport first).
     With `sport`: that sport's full history, newest first, one page (`offset`, `limit`) at a time, plus totals.
+    Each sport carries its `records` (fastest lap, best average speed: this month and ever) and each workout
+    the `badges` of the records it holds.
     """
+    from uniscale.workout_records import with_badges, workout_records
     per_sport = max(1, min(per_sport, 50))
     workouts = [r for r in reversed(load_all_records()) if r.get("type") == "workout"]
+    records = workout_records(workouts)
     if sport is not None:
         mine = [w for w in workouts if str(w.get("sport") or "generic") == sport]
         offset, limit = max(0, offset), max(1, min(limit, 200))
@@ -552,7 +561,8 @@ def get_workouts(per_sport: int = 5, sport: Optional[str] = None, offset: int = 
             "distance_km": round(sum(w.get("distance_km") or (w.get("distance_meters") or 0) / 1000 for w in mine), 1),
             "duration_seconds": round(sum(w.get("duration_seconds") or 0 for w in mine)),
             "first": mine[-1].get("timestamp") if mine else None,
-            "workouts": mine[offset:offset + limit],
+            "records": records.get(sport, {}),
+            "workouts": with_badges(mine[offset:offset + limit], records),
         }
     sports: Dict[str, Dict[str, Any]] = {}
     for w in workouts:
@@ -561,8 +571,10 @@ def get_workouts(per_sport: int = 5, sport: Optional[str] = None, offset: int = 
         if len(entry["recent"]) < per_sport:
             entry["recent"].append(w)
     return {
-        "latest": workouts[0] if workouts else None,
-        "sports": [{"sport": s, **e} for s, e in sports.items()],  # dicts keep newest-first insertion order
+        "latest": with_badges(workouts[:1], records)[0] if workouts else None,
+        # dicts keep newest-first insertion order
+        "sports": [{"sport": s, **e, "recent": with_badges(e["recent"], records), "records": records.get(s, {})}
+                   for s, e in sports.items()],
     }
 
 
@@ -1419,7 +1431,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <label style="display: flex; gap: 8px; align-items: center;"><input type="checkbox" id="profBpTreated"> Taking blood-pressure medication</label>
                 <label for="profCounterTitle">Daily counter tile (leave blank for none)</label>
                 <input id="profCounterTitle" type="text" maxlength="40" placeholder="Title, e.g. D Tracker">
-                <input id="profCounterElements" type="text" placeholder="Buttons, comma-separated, e.g. D(out), D(in)" aria-label="Counter buttons, comma-separated">
+                <input id="profCounterElements" type="text" placeholder="Buttons, e.g. D(out), D(in), or a formula, e.g. D(out)+D(in)=D" aria-label="Counter buttons, comma-separated, or a formula">
+                <div class="metric-sub" style="margin-top: -4px;">A formula (+ - * /) gives a button to each counter on the left of = and shows the result, computed each day, on the right.</div>
                 <div class="import-status" role="status"></div>
                 <div class="import-actions">
                     <button type="button" class="ai-header-btn plain" onclick="this.closest('dialog').close()">Close</button>
@@ -1502,6 +1515,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <div class="metric-main" id="workout-main">-- <span style="font-size: 18px; font-weight: 500;">km</span></div>
                 <div class="metric-sub" id="workout-detail" style="color: var(--text-main); font-weight: 500;">Time -- • Pace --</div>
                 <div class="metric-sub" id="workout-hr">Avg HR -- • Calories --</div>
+                <div id="workout-badges"></div>
                 <div class="metric-sub" style="margin-top: 8px;" id="workout-ts">No workouts recorded yet</div>
             </div>
 
@@ -1917,7 +1931,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     document.getElementById('workout-detail').innerText = `Time ${fmtDuration(w.duration_seconds)} • ${fmtPace(w)}`;
                     document.getElementById('workout-hr').innerText =
                         `Avg HR ${w.avg_heart_rate ?? '--'} bpm • ${w.calories ?? '--'} kcal` +
-                        (w.aerobic_training_effect ? ` • TE ${w.aerobic_training_effect}` : '');
+                        (w.aerobic_training_effect ? ` • TE ${w.aerobic_training_effect}` : '') +
+                        (fmtHrr(w) ? ` • ${fmtHrr(w)}` : '');
+                    document.getElementById('workout-badges').innerHTML = badgesHtml(w);
                     document.getElementById('workout-ts').innerText = `${fmtWhen(w.timestamp)} • ${w.device_name || 'device'}`;
                 }
 
@@ -2801,6 +2817,23 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             const p = Math.round(w.duration_seconds / km);
             return `${Math.floor(p / 60)}:${pad2(p % 60)} /km`;
         }
+        // Speed in m/s as the sport reads it: km/h for cycling, else pace per km.
+        function fmtSpeed(sport, mps) {
+            if (!mps) return '--';
+            if (sport === 'cycling') return (mps * 3.6).toFixed(1) + ' km/h';
+            const p = Math.round(1000 / mps);
+            return `${Math.floor(p / 60)}:${pad2(p % 60)} /km`;
+        }
+        // Record badges from the hub (fastest lap / best average speed, this month or ever).
+        function badgesHtml(w) {
+            return (w.badges || []).map(b => `<span class="badge" style="background: rgba(234, 179, 8, 0.15); color: #ca8a04;
+                border-color: rgba(234, 179, 8, 0.35); font-size: 10px; margin: 2px 4px 0 0; display: inline-block;">🏅 ${b}</span>`).join('');
+        }
+        // Heart rate recovery: bpm fallen 1 and 2 minutes after the workout ended.
+        function fmtHrr(w) {
+            if (w.hr_recovery_1min == null && w.hr_recovery_2min == null) return '';
+            return `HRR ${w.hr_recovery_1min ?? '--'} / ${w.hr_recovery_2min ?? '--'} bpm`;
+        }
         function fmtWhen(ts) {
             const d = new Date(ts);
             if (isNaN(d)) return ts || '';
@@ -2824,7 +2857,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             return `
                 <tr class="clickable" data-i="${i}" onclick="openWorkoutDetail(+this.dataset.i)">
                     <td style="font-weight: 700;">${sportName(w.sport)}</td>
-                    <td>${fmtWhen(w.timestamp)}</td>
+                    <td>${fmtWhen(w.timestamp)}${w.badges?.length ? '<br>' + badgesHtml(w) : ''}</td>
                     <td style="color: var(--accent-blue); font-weight: 600;">${km ? km.toFixed(2) + ' km' : '--'}</td>
                     <td>${fmtDuration(w.duration_seconds)}</td>
                     <td>${fmtPace(w)}</td>
@@ -2922,7 +2955,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         <div class="stat-sub">Avg ${fmtDuration(t.total ? t.duration_seconds / t.total : 0)}</div></div>
                     <div class="stat-box"><div class="stat-label">Average Pace</div>
                         <div class="stat-value" style="font-size: 20px;">${fmtPace({ sport: t.sport, distance_km: t.distance_km, duration_seconds: t.duration_seconds })}</div>
-                        <div class="stat-sub">Over all of them</div></div>`;
+                        <div class="stat-sub">Over all of them</div></div>` + workoutRecordsHtml(t.sport, t.records);
             }
             document.getElementById('modalTableHead').innerHTML = WORKOUT_HEAD;
             document.getElementById('modalTableBody').innerHTML = workoutList.map(workoutRow).join('');
@@ -2932,6 +2965,16 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             scroll.onscroll = () => {
                 if (scroll.scrollTop + scroll.clientHeight >= scroll.scrollHeight - 120) loadMoreWorkouts();
             };
+        }
+
+        // The sport's records: fastest lap and best average speed, this month and ever.
+        function workoutRecordsHtml(sport, rec) {
+            const box = (label, r, lap) => r ? `<div class="stat-box"><div class="stat-label">🏅 ${label}</div>
+                <div class="stat-value" style="font-size: 20px; color: #ca8a04;">${fmtSpeed(sport, r.speed_mps)}</div>
+                <div class="stat-sub">${lap ? `Lap ${r.lap} (${(r.distance_m / 1000).toFixed(2)} km)` : `${(r.distance_m / 1000).toFixed(2)} km`} • ${fmtWhen(r.timestamp)}</div></div>` : '';
+            if (!rec) return '';
+            return box('Fastest lap, 30 days', rec.fastest_lap?.month, true) + box('Fastest lap ever', rec.fastest_lap?.ever, true)
+                + box('Best avg speed, 30 days', rec.best_speed?.month) + box('Best avg speed ever', rec.best_speed?.ever);
         }
 
         async function loadMoreWorkouts() {
@@ -3119,7 +3162,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 margin: 22px 0 8px;">${title}</h3>${html}` : '';
         }
         const WORKOUT_FIELDS_SHOWN = ['type', 'sport', 'timestamp', 'distance_km', 'distance_meters', 'duration_seconds',
-            'avg_heart_rate', 'max_heart_rate', 'calories'];
+            'avg_heart_rate', 'max_heart_rate', 'calories', 'hr_recovery_1min', 'hr_recovery_2min'];
 
         function openWorkoutDetail(i) {
             const w = workoutList[i];
@@ -3130,7 +3173,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             window.workoutBack = fromSport ? () => renderWorkoutSport(scrollTop) : openWorkoutModal;
             const backLabel = fromSport ? `‹ ${sportName(esc(workoutSport))}` : '‹ All workouts';
             workoutModalFrame(`${sportName(w.sport)} <span style="font-weight: 400; font-size: 15px;">${fmtWhen(w.timestamp)}</span>`,
-                `<a class="modal-back" onclick="workoutBack()">${backLabel}</a>${w.device_name || ''}`, 'All Recorded Fields');
+                `<a class="modal-back" onclick="workoutBack()">${backLabel}</a>${w.device_name || ''}${w.badges?.length ? '<br>' + badgesHtml(w) : ''}`, 'All Recorded Fields');
             const km = workoutKm(w);
             const box = (label, value, color) => `<div class="stat-box"><div class="stat-label">${label}</div>
                 <div class="stat-value" style="color: ${color || 'var(--text-main)'};">${value}</div></div>`;
@@ -3140,6 +3183,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 box('Pace / Speed', fmtPace(w)),
                 box('Avg / Max HR', `${w.avg_heart_rate ?? '--'} / ${w.max_heart_rate ?? '--'}`, 'var(--accent-red)'),
                 box('Calories', w.calories ?? '--', '#f97316'),
+                fmtHrr(w) ? box('HR Recovery 1 / 2 min', `${w.hr_recovery_1min ?? '--'} / ${w.hr_recovery_2min ?? '--'} <span style="font-size: 13px;">bpm</span>`, '#10b981') : '',
             ].join('');
             const telemetry = document.getElementById('modalDeviceTelemetry');
             telemetry.innerHTML = workoutSection('Running Dynamics', workoutDynamicsHtml(w))
@@ -3891,7 +3935,13 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             if (!els.length) return;
             document.getElementById('counter-title').innerHTML = c.title;
             document.getElementById('counter-badge').innerText = `Today (${c.date})`;
-            document.getElementById('counter-elements').innerHTML = els.map((e, i) => `
+            const cp = c.computed;
+            document.getElementById('counter-elements').innerHTML = (cp ? `
+                <div style="flex-basis: 100%; text-align: center;" title="${c.formula}">
+                    <div style="font-size: 13px; font-weight: 600; color: var(--text-muted);">${cp.label}</div>
+                    <div class="metric-main" style="font-size: 40px; color: #0ea5e9;">${cp.value ?? '--'}</div>
+                    <div style="font-size: 11px; color: var(--text-muted);">${c.formula}</div>
+                </div>` : '') + els.map((e, i) => `
                 <div style="text-align: center; min-width: 64px;">
                     <div style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 2px;">${e.label}</div>
                     <div class="metric-main" style="color: ${counterColor(i)};">${c.counts[e.key] ?? 0}</div>
@@ -3900,7 +3950,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         <button class="ai-header-btn" style="padding: 2px 10px; font-size: 14px; font-weight: bold;" onclick="event.stopPropagation(); adjustCounterWeb('${e.key}', 1)" aria-label="${e.label} plus one">+</button>
                     </div>
                 </div>`).join('');
-            document.getElementById('counter-footer').innerHTML = 'All-time: ' + els.map(e => `${e.label} ${c.totals[e.key] ?? 0}`).join(' • ');
+            document.getElementById('counter-footer').innerHTML = 'All-time: ' + els.map(e => `${e.label} ${c.totals[e.key] ?? 0}`).join(' • ')
+                + (cp ? ` • ${cp.label} ${cp.total}` : '');
             renderCounterWeek(c);
         }
 
@@ -3977,6 +4028,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 cells.push(`<div style="flex: 1; text-align: center; font-size: 11px; line-height: 1.4;">
                     <div style="color: var(--text-muted);">${label}</div>
                     ${c.elements.map((e, j) => `<div style="color: ${counterColor(j)}; font-weight: 600;">${r ? (r.counts[e.key] ?? 0) : '–'}</div>`).join('')}
+                    ${c.computed ? `<div style="color: #0ea5e9; font-weight: 800; border-top: 1px solid var(--border-color);">${r ? (r.computed ?? '--') : '–'}</div>` : ''}
                 </div>`);
             }
             el.innerHTML = cells.join('');
@@ -4014,7 +4066,12 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         <button class="ai-header-btn" onclick="adjustCounterWeb('${e.key}', 1)">+ 1</button>
                     </div>
                     <div class="stat-sub">7-day avg ${avg7(e.key)} • all-time ${data.totals[e.key] ?? 0}</div>
-                </div>`).join('');
+                </div>`).join('') + (data.computed ? `
+                <div class="stat-card">
+                    <div class="stat-label">Today ${data.computed.label}</div>
+                    <div class="stat-value" style="color: #0ea5e9;">${data.computed.value ?? '--'}</div>
+                    <div class="stat-sub">${data.formula} • all-time ${data.computed.total}</div>
+                </div>` : '');
 
             // Two counters chart side by side; otherwise the daily total.
             if (daily.length > 0) {
@@ -4059,7 +4116,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <tr>
                     <th>Date</th>
                     ${els.map((e, i) => `<th style="color: ${counterColor(i)};">${e.label}</th>`).join('')}
-                    <th>Total</th>
+                    <th>${data.computed ? data.computed.label : 'Total'}</th>
                     <th style="text-align: right;">Adjust</th>
                 </tr>
             `;
@@ -4073,7 +4130,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <tr>
                     <td><strong>${d.date}</strong></td>
                     ${els.map((e, i) => `<td style="color: ${counterColor(i)}; font-weight: 600;">${d.counts[e.key] ?? 0}</td>`).join('')}
-                    <td style="font-weight: 600;">${d.total}</td>
+                    <td style="font-weight: 600;">${data.computed ? (d.computed ?? '--') : d.total}</td>
                     <td style="text-align: right; white-space: nowrap;">
                         ${els.map(e => `<button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 7px; margin-right: 4px;" onclick="adjustCounterWeb('${e.key}', 1, '${d.date}')" title="Add 1 to ${e.label}">+${e.label}</button>`).join('')}
                         <button class="ai-header-btn plain" style="font-size: 11px; padding: 2px 8px;" onclick="editPastRow('${d.date}')">Edit</button>
@@ -4833,7 +4890,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 document.getElementById('profDiabetic').checked = !!p.diabetic;
                 document.getElementById('profBpTreated').checked = !!p.bp_treated;
                 document.getElementById('profCounterTitle').value = p.counter?.title ?? '';
-                document.getElementById('profCounterElements').value = (p.counter?.elements ?? []).join(', ');
+                document.getElementById('profCounterElements').value = p.counter?.formula ?? (p.counter?.elements ?? []).join(', ');
             } catch (err) {
                 st.classList.add('err');
                 st.textContent = 'Could not load profile: ' + err.message;
@@ -4844,7 +4901,9 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         // The counter set from the profile form: null (no tile) when the title or buttons are blank.
         function profileCounter() {
             const title = document.getElementById('profCounterTitle').value.trim();
-            const elements = document.getElementById('profCounterElements').value.split(',').map(e => e.trim()).filter(Boolean);
+            const text = document.getElementById('profCounterElements').value.trim();
+            if (title && text.includes('=')) return { title, formula: text };
+            const elements = text.split(',').map(e => e.trim()).filter(Boolean);
             return title && elements.length ? { title, elements } : null;
         }
 

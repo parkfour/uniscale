@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.uniscale.app.model.BloodPressureData
 import com.uniscale.app.model.CounterState
+import com.uniscale.app.model.counterNumber
 import com.uniscale.app.model.DwellPlace
 import com.uniscale.app.model.EcgData
 import com.uniscale.app.model.PatternsState
@@ -193,7 +194,8 @@ private fun counterColor(i: Int) = COUNTER_COLORS[i % COUNTER_COLORS.size]
 @Composable
 fun CounterHalf(counter: CounterState, modifier: Modifier = Modifier) = HalfTile(
     counter.title ?: "Counter", Icons.Default.SwapHoriz, Color(0xFF0EA5E9),
-    big = counter.elements.takeIf { it.isNotEmpty() }?.joinToString(" / ") { "${counter.counts[it.key] ?: 0}" },
+    big = counter.computed?.let { "${it.label} ${counterNumber(it.value)}" }
+        ?: counter.elements.takeIf { it.isNotEmpty() }?.joinToString(" / ") { "${counter.counts[it.key] ?: 0}" },
     details = counter.elements.map { "${it.label}: ${counter.counts[it.key] ?: 0}" } + "Tap to adjust",
     empty = "Set up a counter in your profile on the hub",
     modifier = modifier
@@ -622,11 +624,21 @@ fun CounterFull(
             if (counter.elements.isEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    "No counter set up. Add one in your profile on the hub: a title and its buttons, e.g. D Tracker with D(out), D(in).",
+                    "No counter set up. Add one in your profile on the hub: a title and its buttons, e.g. D Tracker with D(out), D(in), or a formula such as D(out)+D(in)=D.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.outline
                 )
                 return@Column
+            }
+
+            counter.computed?.let { c ->
+                // The formula's result: computed from the counters below, so shown large and without buttons.
+                Spacer(modifier = Modifier.height(12.dp))
+                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(c.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = MaterialTheme.colorScheme.outline)
+                    Text(counterNumber(c.value), fontSize = 44.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF0EA5E9))
+                    counter.formula?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline) }
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -659,7 +671,8 @@ fun CounterFull(
 
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                "All-time: " + counter.elements.joinToString(" · ") { "${it.label} ${counter.totals[it.key] ?: 0}" },
+                "All-time: " + counter.elements.joinToString(" · ") { "${it.label} ${counter.totals[it.key] ?: 0}" } +
+                    (counter.computed?.let { " · ${it.label} ${counterNumber(it.total)}" } ?: ""),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.outline
             )
@@ -689,7 +702,13 @@ fun CounterFull(
                                     modifier = Modifier.padding(end = 10.dp)
                                 )
                             }
-                            Text("Total: ${rec.total}", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                            val c = counter.computed
+                            if (c != null) {
+                                Text("${c.label}: ${counterNumber(rec.computed)}", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFF0EA5E9))
+                            } else {
+                                Text("Total: ${rec.total}", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                            }
                         }
                     }
                 }

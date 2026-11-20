@@ -77,6 +77,27 @@ object GadgetbridgeWorkouts {
         )
     }
 
+    /** How long after a workout its heart rate is read, for the recovery. */
+    const val RECOVERY_WINDOW_S = 150L
+
+    /** How long a workout waits for the heart rate after it before it's uploaded without the recovery. */
+    const val RECOVERY_WAIT_S = 3 * 3600L
+
+    /**
+     * Heart rate recovery: how far the heart rate fell 1 and 2 minutes after the workout ended
+     * ([end] in seconds from the start, like the samples). The watch samples about once a minute, so
+     * each reading is the sample nearest the mark, within 30 s; a mark without one is left out.
+     */
+    fun hrRecovery(samples: List<Pair<Int, Int>>, end: Int): Map<String, Int> {
+        val atEnd = samples.lastOrNull { (t, _) -> t in (end - 90)..end }?.second ?: return emptyMap()
+        fun near(mark: Int) = samples.filter { (t, _) -> kotlin.math.abs(t - mark) <= 30 }
+            .minByOrNull { (t, _) -> kotlin.math.abs(t - mark) }?.second
+        return listOfNotNull(
+            near(end + 60)?.let { "hr_recovery_1min" to atEnd - it },
+            near(end + 120)?.let { "hr_recovery_2min" to atEnd - it },
+        ).toMap()
+    }
+
     /** interval_1..N rows; the columns are named by intervals_header (e.g. #, Distance, Pace, heart_rate, time). */
     private fun splits(s: JSONObject): List<WorkoutSplit> {
         val header = s.optJSONObject("intervals_header")?.optJSONArray("columns") ?: return emptyList()

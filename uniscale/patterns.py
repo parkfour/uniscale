@@ -95,7 +95,11 @@ def daily_log(db_path: str, records: List[Dict[str, Any]], days: int = DAYS,
     spec = load_profile(db_path).counter
     # "c:" keeps a counter called e.g. "Steps" from overwriting the steps metric in a row
     counters = {"c:" + element_key(label): label for label in (spec.elements if spec else [])}
-    counted = {h["date"]: h["counts"] for h in get_daily_history(db_path, days=0, spec=spec)} if spec else {}
+    computed = spec.computed if spec else None
+    if computed:  # the formula's result, e.g. D = D(out) + D(in), is one more column
+        counters["c:" + computed["key"]] = computed["label"]
+    counted = {h["date"]: {**h["counts"], **({computed["key"]: h["computed"]} if computed else {})}
+               for h in get_daily_history(db_path, days=0, spec=spec)} if spec else {}
     first_count = min(counted) if counted else None
     places = _places_by_day(db_path)
     health = _health_by_day(records)
@@ -112,7 +116,8 @@ def daily_log(db_path: str, records: List[Dict[str, Any]], days: int = DAYS,
         row.update(health.get(day, {}))
         if len(row) > 1:
             rows.append(row)
-    return {"title": spec.title if spec else None, "counters": counters, "rows": rows}
+    return {"title": spec.title if spec else None, "counters": counters, "rows": rows,
+            "formula": spec.formula if spec else None}
 
 
 def _pearson(xs: List[float], ys: List[float]) -> Optional[float]:
@@ -221,8 +226,12 @@ def patterns_prompt(data: Dict[str, Any], log_days: int = DAYS) -> str:
                     f"({p['metric']} averaged {p['avg_high']:g} {hl[0]}, {p['avg_low']:g} {hl[1]})")
     pat_text = "\n".join(pats) or "   - None strong enough yet (needs |r| >= 0.3 over at least 8 days)."
 
-    counter_note = (f"\n   {', '.join(counters.values())} are how many times a day the person tapped each counter "
+    formula = data.get("formula")
+    tapped = list(counters.values())[:-1] if formula else list(counters.values())
+    counter_note = (f"\n   {', '.join(tapped)} are how many times a day the person tapped each counter "
                     f"of their \"{data.get('title')}\" tracker (counts, not hours)." if counters else "")
+    if counters and formula:
+        counter_note += f" {list(counters.values())[-1]} is not tapped but computed each day: {formula}."
     return f"""8. **Daily Log (last {log_days} days; blank = not measured; away_h and places only on days with location data;
    sleep_h, hrv_ms and sleep_score are the night that ended that morning):**{counter_note}
 ```

@@ -171,7 +171,11 @@ def test_api_counter_and_places_endpoints(monkeypatch, temp_vault):
 
     # The profile's counter round-trips through the profile API
     prof = client.get("/api/profile").json()
-    assert prof["counter"] == {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}
+    assert prof["counter"] == {"title": "D Tracker", "elements": ["D(out)", "D(in)"], "formula": None}
+    put = client.put("/api/profile", json=prof | {"counter": {"title": "D Tracker", "formula": "D(out)+D(in)=D"}})
+    assert put.status_code == 200
+    assert client.get("/api/counter").json()["computed"]["label"] == "D"
+    assert client.put("/api/profile", json=prof | {"counter": {"title": "D", "formula": "D(out)+="}}).status_code == 422
     assert client.put("/api/profile", json=prof | {"counter": {"title": "T", "elements": ["a", "A"]}}).status_code == 422
 
     # 4. POST /api/owntracks webhook
@@ -456,3 +460,54 @@ def test_cli_profile_sets_and_clears_the_counter(temp_vault, monkeypatch, capsys
     monkeypatch.setattr("sys.argv", ["uniscale", "profile", "--counter", ""])
     cli.main()
     assert load_profile(temp_vault).counter is None
+
+
+def test_counter_formula_parses_and_evaluates():
+    from uniscale.config import CounterSet, evaluate_formula
+    c = CounterSet(title="Fluid", formula="Fluid(in) - Fluid(out) = Net Fluid")
+    assert c.elements == ["Fluid(in)", "Fluid(out)"]
+    assert c.computed["label"] == "Net Fluid" and c.computed["key"] == "net_fluid"
+    assert evaluate_formula(c.computed["terms"], {"fluid_in": 5, "fluid_out": 7}) == -2
+    # * and / bind before + and -; numbers are constants; division by zero gives None
+    terms = CounterSet(title="X", formula="A + B*2 - C/D = R").computed["terms"]
+    assert evaluate_formula(terms, {"a": 1, "b": 3, "c": 3, "d": 2}) == 5.5
+    assert evaluate_formula(terms, {"a": 1, "b": 3, "c": 3, "d": 0}) is None
+
+
+def test_counter_formula_rejects_bad_formulas():
+    from pydantic import ValidationError
+    from uniscale.config import CounterSet
+    for bad in ("A+B", "A+B=C=D", "A+=C", "A+B=", "A+B=A", "-A+B=C"):
+        with pytest.raises(ValidationError):
+            CounterSet(title="X", formula=bad)
+    with pytest.raises(ValidationError):  # a formula naming a counter the set doesn't have
+        CounterSet(title="X", elements=["A"], formula="A+B=C")
+
+
+def test_counter_state_carries_the_computed_value(temp_vault):
+    with open(os.path.join(os.path.dirname(temp_vault), "profile.json"), "w") as f:
+        json.dump({"counter": {"title": "D Tracker", "formula": "D(out)+D(in)=D"}}, f)
+    adjust_counter("D(out)", 2, db_path=temp_vault, target_date="2026-11-13")
+    adjust_counter("D(in)", 3, db_path=temp_vault, target_date="2026-11-14")
+    s = adjust_counter("D(out)", 1, db_path=temp_vault, target_date="2026-11-14")
+    assert [e["key"] for e in s["elements"]] == ["d_out", "d_in"]
+    assert s["formula"] == "D(out)+D(in)=D"
+    assert s["computed"] == {"key": "d", "label": "D", "value": 4, "total": 6}
+    assert [h["computed"] for h in s["daily_history"]] == [4, 2]
+    with pytest.raises(ValueError):  # the result is computed, never tapped
+        adjust_counter("D", 1, db_path=temp_vault)
+
+    from uniscale.patterns import daily_log, patterns_prompt
+    log = daily_log(temp_vault, [], today=datetime(2026, 11, 14).date())
+    assert log["counters"]["c:d"] == "D" and log["rows"][-1]["c:d"] == 4
+    assert "computed each day: D(out)+D(in)=D" in patterns_prompt(log)
+
+
+def test_cli_profile_sets_a_counter_formula(temp_vault, monkeypatch):
+    from uniscale import cli
+    from uniscale.config import load_profile
+    monkeypatch.setenv("UNISCALE_DB_PATH", temp_vault)
+    monkeypatch.setattr("sys.argv", ["uniscale", "profile", "--counter", "D Tracker: D(out)+D(in)=D"])
+    cli.main()
+    c = load_profile(temp_vault).counter
+    assert c.formula == "D(out)+D(in)=D" and c.elements == ["D(out)", "D(in)"]

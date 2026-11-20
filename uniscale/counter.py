@@ -1,7 +1,8 @@
 """
 Daily tap counters. Which counters a person has comes from their profile (`counter`: a title and a
-list of element labels, e.g. "D Tracker" with "D(out)" and "D(in)"); counts are kept per day in
-counters.json next to the vault, keyed by element_key(label), and each tap is also logged to the vault.
+list of element labels, e.g. "D Tracker" with "D(out)" and "D(in)", or a formula such as "D(out)+D(in)=D"
+whose result is computed each day, never tapped); counts are kept per day in counters.json next to the
+vault, keyed by element_key(label), and each tap is also logged to the vault.
 """
 import json
 import logging
@@ -9,7 +10,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from uniscale.config import CounterSet, element_key, load_profile, vault_db_path
+from uniscale.config import CounterSet, element_key, evaluate_formula, load_profile, vault_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +72,20 @@ def _counts(entry: Dict[str, Any], keys: List[str]) -> Dict[str, int]:
 
 
 def get_daily_history(db_path: Optional[str] = None, days: int = 30, spec: Optional[CounterSet] = None) -> List[Dict[str, Any]]:
-    """Per-day counts for the profile's counters, newest first: [{date, counts: {key: n}, total}]."""
-    keys = [e["key"] for e in _elements(spec or _spec(db_path))]
+    """
+    Per-day counts for the profile's counters, newest first: [{date, counts: {key: n}, total}], plus
+    `computed` (the formula's result that day) when the counter set has a formula.
+    """
+    spec = spec or _spec(db_path)
+    keys = [e["key"] for e in _elements(spec)]
+    computed = spec.computed if spec else None
     history = []
     for d_str, entry in _load_counters_raw(db_path)["by_date"].items():
         counts = _counts(entry, keys)
-        history.append({"date": d_str, "counts": counts, "total": sum(counts.values()), "updated_at": entry.get("updated_at")})
+        row = {"date": d_str, "counts": counts, "total": sum(counts.values()), "updated_at": entry.get("updated_at")}
+        if computed:
+            row["computed"] = evaluate_formula(computed["terms"], counts)
+        history.append(row)
     history.sort(key=lambda x: x["date"], reverse=True)
     return history[:days] if days and days > 0 else history
 
@@ -84,7 +93,8 @@ def get_daily_history(db_path: Optional[str] = None, days: int = 30, spec: Optio
 def get_counter_state(db_path: Optional[str] = None, target_date: Optional[str] = None, spec: Optional[CounterSet] = None) -> Dict[str, Any]:
     """
     The counter set (title and elements, empty when the profile has none), the counts for
-    target_date (default today), all-time totals, recent taps and the last 30 days.
+    target_date (default today), all-time totals, recent taps and the last 30 days. With a formula,
+    `computed` holds its result for the day ({key, label, value, total}: total = sum over all days).
     """
     spec = spec or _spec(db_path)
     elements = _elements(spec)
@@ -92,11 +102,20 @@ def get_counter_state(db_path: Optional[str] = None, target_date: Optional[str] 
     day = _today(target_date)
     raw = _load_counters_raw(db_path)
     by_date = raw["by_date"]
+    counts = _counts(by_date.get(day, {}), keys)
+    computed = None
+    if spec and spec.computed:
+        c = spec.computed
+        daily = [evaluate_formula(c["terms"], _counts(d, keys)) for d in by_date.values()]
+        computed = {"key": c["key"], "label": c["label"], "value": evaluate_formula(c["terms"], counts),
+                    "total": round(sum(v for v in daily if v is not None), 2)}
     return {
         "title": spec.title if spec else None,
         "elements": elements,
+        "formula": spec.formula if spec else None,
+        "computed": computed,
         "date": day,
-        "counts": _counts(by_date.get(day, {}), keys),
+        "counts": counts,
         "totals": {k: sum(_counts(d, [k])[k] for d in by_date.values()) for k in keys},
         "history": raw["history"][-20:],
         "daily_history": get_daily_history(db_path, days=30, spec=spec),

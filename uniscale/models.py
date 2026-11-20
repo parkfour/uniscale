@@ -109,7 +109,10 @@ class ActivityWorkout(BaseModel):
     gps_track: Optional[List[Tuple[float, float]]] = None  # [(lat, lon), ...]
     hr_zones: Optional[List[HrZoneTime]] = None
     splits: Optional[List[WorkoutSplit]] = None
-    hr_samples: Optional[List[Tuple[int, int]]] = None  # (seconds from start, bpm)
+    hr_samples: Optional[List[Tuple[int, int]]] = None  # (seconds from start, bpm); may run past the end
+    # Heart rate recovery: bpm fallen 1 and 2 minutes after the workout ended
+    hr_recovery_1min: Optional[int] = None
+    hr_recovery_2min: Optional[int] = None
 
     def model_post_init(self, __context):
         if self.distance_km == 0.0 and self.distance_meters > 0:
