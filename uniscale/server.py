@@ -3147,9 +3147,12 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 
         function workoutSplitsHtml(splits) {
             if (!splits || !splits.length) return '';
+            // A lap well short of the others (the last bit of a run) is partial: shown dimmed, never a record.
+            const longest = Math.max(...splits.map(s => s.distance_m || 0));
             const rows = splits.map((s, i) => {
                 const pace = s.distance_m ? Math.round(s.seconds / (s.distance_m / 1000)) : 0;
-                return `<tr><td>${i + 1}</td><td>${(s.distance_m / 1000).toFixed(2)} km</td><td>${fmtDuration(s.seconds)}</td>
+                const partial = s.distance_m < 0.9 * longest;
+                return `<tr${partial ? ' style="opacity: 0.55;"' : ''}><td>${i + 1}${partial ? ' <span style="font-size: 11px;">(partial)</span>' : ''}</td><td>${(s.distance_m / 1000).toFixed(2)} km</td><td>${fmtDuration(s.seconds)}</td>
                     <td style="font-weight: 600;">${pace ? `${Math.floor(pace / 60)}:${pad2(pace % 60)} /km` : '--'}</td>
                     <td style="color: var(--accent-red);">${s.avg_hr ?? '--'}</td></tr>`;
             }).join('');

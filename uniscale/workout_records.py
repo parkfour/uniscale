@@ -81,14 +81,14 @@ def workout_records(workouts: List[Dict[str, Any]], now: Optional[datetime] = No
 
 
 def badges(w: Dict[str, Any], records: Dict[str, Dict[str, Any]]) -> List[str]:
-    """The record badges this workout holds; one per kind (all-time beats this month)."""
+    """The record badges this workout holds; one per kind (all-time beats this month). A lap names its number."""
     mine = records.get(str(w.get("sport") or "generic"), {})
     found = []
     for kind in ("fastest_lap", "best_speed"):
         for span in ("ever", "month"):
             rec = mine.get(kind, {}).get(span)
             if rec and rec["timestamp"] == w.get("timestamp"):
-                found.append(BADGES[(kind, span)])
+                found.append(BADGES[(kind, span)] + (f" (lap {rec['lap']})" if "lap" in rec else ""))
                 break
     return found
 

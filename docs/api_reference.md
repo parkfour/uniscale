@@ -95,7 +95,7 @@ Device-tracked workouts for the dashboard's **Last Workout** tile.
   }
   ```
   Each sport also has `records`, and every workout returned has `badges`: the records it holds, e.g.
-  `["Fastest lap ever", "Best avg speed this month"]`. A record is `{speed_mps, distance_m, seconds, timestamp}`
+  `["Fastest lap ever (lap 5)", "Best avg speed this month"]`. A record is `{speed_mps, distance_m, seconds, timestamp}`
   (plus `lap`, its number, for a lap); "month" means the last 30 days. Only full laps (at least 400 m and 90% of the
   workout's longest lap), workouts of at least 1 km and speeds plausible for the sport (walking up to 12 km/h,
   running 25) count. With `?sport=running` the response carries that sport's `records` too.

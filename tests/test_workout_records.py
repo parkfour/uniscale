@@ -22,12 +22,12 @@ def test_records_split_this_month_from_all_time():
     assert rec["best_speed"]["month"]["timestamp"] == recent["timestamp"]
 
     recs = workout_records([old_fast, recent, recent_slow], now=NOW)
-    assert badges(old_fast, recs) == ["Fastest lap ever", "Best avg speed ever"]
-    assert badges(recent, recs) == ["Fastest lap this month", "Best avg speed this month"]
+    assert badges(old_fast, recs) == ["Fastest lap ever (lap 1)", "Best avg speed ever"]
+    assert badges(recent, recs) == ["Fastest lap this month (lap 1)", "Best avg speed this month"]
     assert badges(recent_slow, recs) == []
     # A workout holding both the all-time and the month record shows only the all-time one
     only = run("2026-11-18T08:00:00Z", 5, 1300, laps=[(1000, 250)])
-    assert badges(only, workout_records([only], now=NOW)) == ["Fastest lap ever", "Best avg speed ever"]
+    assert badges(only, workout_records([only], now=NOW)) == ["Fastest lap ever (lap 1)", "Best avg speed ever"]
 
 
 def test_short_laps_and_short_workouts_dont_set_records():
@@ -62,7 +62,7 @@ def test_workouts_api_carries_records_and_badges(tmp_path, monkeypatch):
     assert data["latest"]["badges"] == []
     assert data["sports"][0]["records"]["fastest_lap"]["ever"]["seconds"] == 270
     sport = client.get("/api/workouts", params={"sport": "running"}).json()
-    assert sport["workouts"][1]["badges"] == ["Fastest lap ever", "Best avg speed ever"]
+    assert sport["workouts"][1]["badges"] == ["Fastest lap ever (lap 1)", "Best avg speed ever"]
     assert sport["workouts"][0]["hr_recovery_2min"] == 35
     assert client.get("/api/summary").json()["latest_workout"]["badges"] == []
 
@@ -72,3 +72,12 @@ def test_implausible_speeds_are_not_records():
     walk = run("2026-11-18T09:00:00Z", 3, 2000, sport="walking")
     rec = workout_records([drive, walk], now=NOW)["walking"]
     assert rec["best_speed"]["ever"]["timestamp"] == walk["timestamp"]
+
+
+def test_a_fast_partial_last_lap_is_not_the_record():
+    # The Nov 18 shape: five 1 km laps, then 161 m at a faster pace than any of them
+    w = run("2026-11-18T17:45:29Z", 5.16, 1850, laps=[(1000, 383.7), (1000, 372.3), (1000, 370.8), (1000, 351.4),
+                                                      (1000, 325.6), (161.44, 46.5)])
+    rec = workout_records([w], now=NOW)["running"]["fastest_lap"]["ever"]
+    assert rec["lap"] == 5 and rec["distance_m"] == 1000
+    assert badges(w, workout_records([w], now=NOW))[0] == "Fastest lap ever (lap 5)"
