@@ -94,6 +94,16 @@ Device-tracked workouts for the dashboard's **Last Workout** tile.
     ]
   }
   ```
+  Each sport also has `records`, and every workout returned has `badges`: the records it holds, e.g.
+  `["Fastest lap ever", "Best avg speed this month"]`. A record is `{speed_mps, distance_m, seconds, timestamp}`
+  (plus `lap`, its number, for a lap); "month" means the last 30 days. Only full laps (at least 400 m and 90% of the
+  workout's longest lap), workouts of at least 1 km and speeds plausible for the sport (walking up to 12 km/h,
+  running 25) count. With `?sport=running` the response carries that sport's `records` too.
+  ```json
+  {"records": {"fastest_lap": {"ever": {"speed_mps": 3.07, "distance_m": 1000, "seconds": 325.6, "lap": 5,
+               "timestamp": "2026-11-18T17:45:29Z"}, "month": {"...": "..."}},
+               "best_speed": {"ever": {"...": "..."}, "month": {"...": "..."}}}}
+  ```
 * **One sport's history:** `?sport=running&offset=0&limit=50` (limit max 200) returns that sport's workouts newest
   first, one page at a time, with totals over all of them. The dashboard's Workouts modal uses it for the
   scrollable per-type history.
@@ -214,7 +224,9 @@ Ingest a specific workout activity.
     "hr_samples": [[0, 100], [60, 135], [120, 150]]
   }
   ```
-  `hr_samples` are `[seconds from start, bpm]`. A workout sent again with the same `timestamp` (e.g. with more
+  `hr_samples` are `[seconds from start, bpm]` and may run a little past the end. `hr_recovery_1min` and
+  `hr_recovery_2min` are the heart rate recovery: how many bpm it fell 1 and 2 minutes after the workout ended (the
+  phone app works them out from the watch's per-minute heart rate). A workout sent again with the same `timestamp` (e.g. with more
   detail) merges with the stored one; the copy with more data wins.
 
 #### `POST /api/sync/lab`
@@ -345,6 +357,10 @@ The signed-in user's profile, stored as `profile.json` next to their vault:
  "counter": {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}}
 ```
 `counter` defines the daily counter tile (up to 8 distinct buttons of at most 20 characters); `null` means no tile.
+Instead of `elements` it can have a `formula`, e.g. `{"title": "D Tracker", "formula": "D(out)+D(in)=D"}` or
+`"Fluid(in) - Fluid(out) = Net Fluid"`: each counter on the left of `=` gets buttons, and the name on the right is
+computed from them every day and shown larger, never tapped. Operands are counters or numbers joined by `+ - * /`
+(`*` and `/` first, no brackets), so a counter's label can't contain one of those signs.
 `name` is shown in the dashboard header and Dr. Gemma's greeting. With `date_of_birth` set, ages are exact on each
 lab date and `birth_year` follows it; `birth_year` alone still works for anyone who prefers not to give the full
 date. `sex` is `"male"`, `"female"` or `null`; 10-year ASCVD risk is `null` until it is set. `PUT` replaces the
@@ -360,6 +376,9 @@ from its label (`"D(out)"` → `"d_out"`); counts, totals and history are keyed 
  "date": "2026-11-17", "counts": {"d_out": 2, "d_in": 1}, "totals": {"d_out": 40, "d_in": 31},
  "daily_history": [{"date": "2026-11-17", "counts": {"d_out": 2, "d_in": 1}, "total": 3}], "history": [...]}
 ```
+With a formula there are also `"formula": "D(out)+D(in)=D"`, `"computed": {"key": "d", "label": "D", "value": 3,
+"total": 71}` (`value` for the day, `null` on a division by zero; `total` summed over all days) and a `computed`
+value on each `daily_history` day.
 `POST {"item": "D(out)", "delta": 1}` taps one counter (by key or label; `delta` defaults to 1, counts never go
 below 0); `POST {"counts": {"d_out": 3}, "date": "2026-11-10"}` sets a day. Unknown counters are a `422`.
 `GET /api/counter/history?days=30` returns the daily history; `POST /api/counter/history {"entries": [{"date": ..., "counts": {...}}]}` imports past days.

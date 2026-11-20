@@ -125,10 +125,70 @@ def element_key(label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
 
 
+FORMULA_OPS = "+-*/"
+
+
+def parse_formula(text: str) -> Dict[str, object]:
+    """
+    "D(out) + D(in) = D" -> {"terms": [("+", "D(out)"), ("+", "D(in)")], "result": "D"}. Operands are
+    counter labels or numbers joined by + - * / (no brackets; * and / bind first), so a label can't
+    contain one of those operators.
+    """
+    if text.count("=") != 1:
+        raise ValueError("a formula needs exactly one '=', e.g. D(out)+D(in)=D")
+    lhs, result = (part.strip() for part in text.split("="))
+    if not result or not element_key(result) or len(result) > 20:
+        raise ValueError("the name after '=' needs a letter or digit and at most 20 characters")
+    parts = [p.strip() for p in re.split(r"([+\-*/])", lhs)]
+    operands, ops = parts[0::2], ["+"] + parts[1::2]
+    if any(not o for o in operands):
+        raise ValueError("each + - * / needs a counter or number on both sides")
+    return {"terms": list(zip(ops, operands)), "result": result}
+
+
+def _number(operand: str) -> Optional[float]:
+    try:
+        return float(operand)
+    except ValueError:
+        return None
+
+
+def evaluate_formula(terms: List[tuple], values: Dict[str, float]) -> Optional[float]:
+    """Applies parse_formula's terms to values keyed by element_key; None on division by zero."""
+    sums: List[float] = []
+    for op, operand in terms:
+        v = _number(operand)
+        v = values.get(element_key(operand), 0) if v is None else v
+        if op in "+-":
+            sums.append(v if op == "+" else -v)
+        elif op == "*":
+            sums[-1] *= v
+        elif v == 0:
+            return None
+        else:
+            sums[-1] /= v
+    total = round(sum(sums), 2)
+    return int(total) if total == int(total) else total
+
+
 class CounterSet(BaseModel):
-    """A daily tap counter tile: {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}."""
+    """
+    A daily tap counter tile: {"title": "D Tracker", "elements": ["D(out)", "D(in)"]}, or with a formula
+    {"title": "D Tracker", "formula": "D(out)+D(in)=D"}: the counters on the left get buttons and the
+    name on the right is computed from them each day.
+    """
     title: str = Field(min_length=1, max_length=40)
     elements: List[str] = Field(min_length=1, max_length=8)
+    formula: Optional[str] = Field(default=None, max_length=120)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _elements_from_formula(cls, data):
+        if isinstance(data, dict) and data.get("formula") and not data.get("elements"):
+            terms = parse_formula(str(data["formula"]))["terms"]
+            labels = [o for _, o in terms if _number(o) is None]
+            data = {**data, "elements": list(dict.fromkeys(labels))}
+        return data
 
     @field_validator("title")
     @classmethod
@@ -147,6 +207,29 @@ class CounterSet(BaseModel):
         if len(set(keys)) != len(keys):
             raise ValueError("elements must be distinct")
         return labels
+
+    @model_validator(mode="after")
+    def _formula_matches_elements(self):
+        if not self.formula:
+            self.formula = None
+            return self
+        parsed = parse_formula(self.formula)
+        keys = {element_key(e) for e in self.elements}
+        unknown = [o for _, o in parsed["terms"] if _number(o) is None and element_key(o) not in keys]
+        if unknown:
+            raise ValueError(f"the formula uses {', '.join(unknown)}, which isn't one of the counters")
+        if element_key(parsed["result"]) in keys:
+            raise ValueError("the name after '=' must differ from the counters")
+        self.formula = self.formula.strip()
+        return self
+
+    @property
+    def computed(self) -> Optional[Dict[str, object]]:
+        """{"key", "label", "terms"} of the formula's result, or None without a formula."""
+        if not self.formula:
+            return None
+        parsed = parse_formula(self.formula)
+        return {"key": element_key(parsed["result"]), "label": parsed["result"], "terms": parsed["terms"]}
 
 
 class ProfileConfig(BaseModel):

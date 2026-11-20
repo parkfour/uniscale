@@ -229,9 +229,10 @@ class HubSyncManager(
         val config = configManager.config.value
         if (!config.autoUploadHub || config.hubUrl.isBlank()) return@withContext false
 
-        // v2: workouts now carry splits, HR zones and HR samples; re-send the ones already uploaded without them.
-        val syncKey = syncKey("workout2_${w.startTime}")
+        // v3: workouts now carry heart rate recovery; re-send the recent ones (the hub keeps the richer copy).
+        val syncKey = syncKey("workout3_${w.startTime}")
         if (isSynced(syncKey)) return@withContext true
+        if (w.recoveryPending) return@withContext false  // next sync, once the watch has the heart rate after it
 
         try {
             val json = JSONObject()

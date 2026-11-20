@@ -81,7 +81,7 @@ def test_no_counter_or_places_still_builds(tmp_path):
     vault = str(tmp_path / "measurements.jsonl")
     open(vault, "w").close()
     data = build_patterns(vault, [])
-    assert data == {"title": None, "counters": {}, "rows": [], "patterns": []}
+    assert data == {"title": None, "counters": {}, "rows": [], "formula": None, "patterns": []}
     assert patterns_prompt(data) == ""
 
 

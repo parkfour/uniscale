@@ -23,6 +23,26 @@ class CounterAndPlacesTest {
     }
 
     @Test
+    fun `a counter formula's result is read with its daily values`() {
+        val c = CounterState.fromJson(JSONObject("""{"title": "Fluid",
+            "elements": [{"key": "in", "label": "In"}, {"key": "out", "label": "Out"}],
+            "formula": "In-Out=Net", "computed": {"key": "net", "label": "Net", "value": -2, "total": 3.5},
+            "date": "2026-11-20", "counts": {"in": 5, "out": 7}, "totals": {"in": 9, "out": 5.5},
+            "daily_history": [{"date": "2026-11-20", "counts": {"in": 5, "out": 7}, "total": 12, "computed": -2},
+                              {"date": "2026-11-19", "counts": {"in": 1, "out": 0}, "total": 1, "computed": null}]}"""))
+        assertEquals("In-Out=Net", c.formula)
+        assertEquals(CounterComputed("Net", -2.0, 3.5), c.computed)
+        assertEquals(listOf(-2.0, null), c.dailyHistory.map { it.computed })
+        assertEquals("-2", counterNumber(-2.0))
+        assertEquals("1.5", counterNumber(1.5))
+        assertEquals("--", counterNumber(null))
+        // Without a formula there is nothing computed
+        val plain = CounterState.fromJson(JSONObject("""{"title": "X", "elements": [], "formula": null, "computed": null}"""))
+        assertEquals(null, plain.formula)
+        assertEquals(null, plain.computed)
+    }
+
+    @Test
     fun `no counter set up reads as no elements`() {
         val c = CounterState.fromJson(JSONObject("""{"title": null, "elements": [], "date": "2026-11-17", "counts": {}}"""))
         assertEquals(null, c.title)

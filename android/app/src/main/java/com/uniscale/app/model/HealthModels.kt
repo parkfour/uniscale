@@ -179,8 +179,10 @@ data class WorkoutData(
     val extras: Map<String, Double> = emptyMap(),
     val hrZones: List<HrZone> = emptyList(),
     val splits: List<WorkoutSplit> = emptyList(),
-    /** Heart rate during the workout: (seconds from start, bpm), roughly one per minute. */
-    val hrSamples: List<Pair<Int, Int>> = emptyList()
+    /** Heart rate during the workout and a little after it: (seconds from start, bpm), roughly one per minute. */
+    val hrSamples: List<Pair<Int, Int>> = emptyList(),
+    /** Ended recently and the watch hasn't sent the heart rate after it yet: upload later, with the recovery. */
+    val recoveryPending: Boolean = false
 )
 
 /** Time spent in one heart-rate zone (1 = warm up ... 5 = maximum) and the bpm where the zone starts. */
@@ -203,8 +205,17 @@ data class CounterElement(val key: String, val label: String)
 data class CounterDailyRecord(
     val date: String,
     val counts: Map<String, Int> = emptyMap(),
-    val total: Int = 0
+    val total: Int = 0,
+    /** The formula's result that day (null without a formula, or on a division by zero). */
+    val computed: Double? = null
 )
+
+/** The result of the counter set's formula, e.g. D in "D(out)+D(in)=D": shown, never tapped. */
+data class CounterComputed(val label: String, val value: Double?, val total: Double)
+
+/** 4.0 -> "4", 1.5 -> "1.5", null -> "--". */
+fun counterNumber(v: Double?): String =
+    if (v == null) "--" else if (v == Math.floor(v) && !v.isInfinite()) v.toLong().toString() else v.toString()
 
 /** The counter set from the hub profile (no elements: none set up) and its counts. */
 data class CounterState(
@@ -213,11 +224,16 @@ data class CounterState(
     val date: String = "",
     val counts: Map<String, Int> = emptyMap(),
     val totals: Map<String, Int> = emptyMap(),
-    val dailyHistory: List<CounterDailyRecord> = emptyList()
+    val dailyHistory: List<CounterDailyRecord> = emptyList(),
+    val formula: String? = null,
+    val computed: CounterComputed? = null
 ) {
     companion object {
         private fun JSONObject?.intMap(): Map<String, Int> =
             this?.keys()?.asSequence()?.associateWith { optInt(it, 0) } ?: emptyMap()
+
+        private fun JSONObject.numberOrNull(key: String): Double? =
+            if (isNull(key)) null else optDouble(key).takeIf { !it.isNaN() }
 
         private fun JSONArray?.objects(): List<JSONObject> =
             if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
@@ -230,7 +246,12 @@ data class CounterState(
             counts = json.optJSONObject("counts").intMap(),
             totals = json.optJSONObject("totals").intMap(),
             dailyHistory = json.optJSONArray("daily_history").objects().map {
-                CounterDailyRecord(it.optString("date", ""), it.optJSONObject("counts").intMap(), it.optInt("total", 0))
+                CounterDailyRecord(it.optString("date", ""), it.optJSONObject("counts").intMap(), it.optInt("total", 0),
+                    it.numberOrNull("computed"))
+            },
+            formula = json.optString("formula").takeIf { it.isNotBlank() && it != "null" },
+            computed = json.optJSONObject("computed")?.let {
+                CounterComputed(it.optString("label"), it.numberOrNull("value"), it.optDouble("total", 0.0))
             }
         )
     }

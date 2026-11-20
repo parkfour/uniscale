@@ -141,12 +141,16 @@ def cmd_counter(args):
     days = getattr(args, "history", 10) or 10
     history = get_daily_history(v_path, days=days)
     print(f"\n--- {state['title']} ---")
-    print(f"{state['date']}: " + " | ".join(f"{e['label']} = {state['counts'][e['key']]}" for e in els))
-    print("All-time: " + " | ".join(f"{e['label']} = {state['totals'][e['key']]}" for e in els) + "\n")
+    c = state.get("computed")
+    print(f"{state['date']}: " + " | ".join(f"{e['label']} = {state['counts'][e['key']]}" for e in els)
+          + (f" | {c['label']} = {c['value']}  ({state['formula']})" if c else ""))
+    print("All-time: " + " | ".join(f"{e['label']} = {state['totals'][e['key']]}" for e in els)
+          + (f" | {c['label']} = {c['total']:g}" if c else "") + "\n")
     print(f"Past {len(history)} days:")
-    print(f"{'Date':<12}" + "".join(f"{e['label']:<10}" for e in els) + "Total")
+    print(f"{'Date':<12}" + "".join(f"{e['label']:<10}" for e in els) + (c["label"] if c else "Total"))
     for h in history:
-        print(f"{h['date']:<12}" + "".join(f"{h['counts'][e['key']]:<10}" for e in els) + str(h["total"]))
+        print(f"{h['date']:<12}" + "".join(f"{h['counts'][e['key']]:<10}" for e in els)
+              + str(h["computed"] if c else h["total"]))
 
 def cmd_place(args):
     from datetime import datetime, timezone, timedelta
@@ -342,7 +346,12 @@ def cmd_profile(args):
         updates["date_of_birth"] = None  # a bare year replaces a full date of birth
     if args.counter is not None:
         title, _, elements = args.counter.partition(":")
-        updates["counter"] = {"title": title, "elements": [e.strip() for e in elements.split(",") if e.strip()]} if args.counter.strip() else None
+        if not args.counter.strip():
+            updates["counter"] = None
+        elif "=" in elements:
+            updates["counter"] = {"title": title, "formula": elements.strip()}
+        else:
+            updates["counter"] = {"title": title, "elements": [e.strip() for e in elements.split(",") if e.strip()]}
     if updates:
         try:
             profile = save_profile(ProfileConfig.model_validate({**profile.model_dump(), **updates}), db_path)
@@ -649,7 +658,7 @@ def main():
     p_prof.add_argument("--smoker", action=argparse.BooleanOptionalAction, default=None, help="Current smoker")
     p_prof.add_argument("--diabetic", action=argparse.BooleanOptionalAction, default=None, help="Diabetic")
     p_prof.add_argument("--bp-treated", action=argparse.BooleanOptionalAction, default=None, help="Taking blood-pressure medication")
-    p_prof.add_argument("--counter", metavar='"TITLE: A, B"', help='Daily counter tile, e.g. "D Tracker: D(out), D(in)"; "" removes it')
+    p_prof.add_argument("--counter", metavar='"TITLE: A, B"', help='Daily counter tile, e.g. "D Tracker: D(out), D(in)" or with a computed total "D Tracker: D(out)+D(in)=D"; "" removes it')
 
     p_cfg = subparsers.add_parser("config", help="Manage configuration file")
     p_cfg.add_argument("config_action", choices=["init", "show"], help="Action: init (create default file), show (print active config)")

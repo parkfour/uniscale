@@ -77,4 +77,16 @@ class GadgetbridgeWorkoutsTest {
         assertEquals(600.0, w.durationSeconds, 0.0)
         assertNull(w.avgHeartRate)
     }
+
+    @Test
+    fun `heart rate recovery is the fall 1 and 2 minutes after the end`() {
+        // The shape of a real run: one sample a minute, none at end + 59 s
+        val samples = listOf(2400 to 157, 2464 to 155, 2524 to 159, 2644 to 140, 2704 to 131)
+        assertEquals(mapOf("hr_recovery_2min" to 19), GadgetbridgeWorkouts.hrRecovery(samples, 2525))
+        val full = samples + (2585 to 150)
+        assertEquals(mapOf("hr_recovery_1min" to 9, "hr_recovery_2min" to 19), GadgetbridgeWorkouts.hrRecovery(full, 2525))
+        // No sample near the end, or none after it: nothing to say
+        assertEquals(emptyMap<String, Int>(), GadgetbridgeWorkouts.hrRecovery(listOf(100 to 120, 2700 to 100), 2525))
+        assertEquals(emptyMap<String, Int>(), GadgetbridgeWorkouts.hrRecovery(listOf(2500 to 160), 2525))
+    }
 }
