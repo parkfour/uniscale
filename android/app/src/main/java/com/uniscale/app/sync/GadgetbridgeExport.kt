@@ -157,6 +157,19 @@ class GadgetbridgeExport(private val context: Context) {
             "SELECT SUM(MODERATE) + SUM(VIGOROUS) FROM GARMIN_INTENSITY_MINUTES_SAMPLE WHERE TIMESTAMP >= ? AND TIMESTAMP < ?",
             start * 1000, end * 1000
         ) { it.intOrNull(0) }.firstOrNull()
+        val stress = rows(
+            db,
+            "SELECT AVG(STRESS), MAX(STRESS) FROM GARMIN_STRESS_SAMPLE " +
+                "WHERE TIMESTAMP >= ? AND TIMESTAMP < ? AND STRESS BETWEEN 0 AND 100",  // -1/-2: couldn't measure
+            start * 1000, end * 1000
+        ) { (it.doubleOrNull(0)?.roundToInt()) to it.intOrNull(1) }.firstOrNull()
+        val battery = rows(
+            db,
+            "SELECT MAX(ENERGY), MIN(ENERGY), (SELECT ENERGY FROM GARMIN_BODY_ENERGY_SAMPLE WHERE TIMESTAMP >= ?1 " +
+                "AND TIMESTAMP < ?2 AND ENERGY BETWEEN 0 AND 100 ORDER BY TIMESTAMP DESC LIMIT 1) " +
+                "FROM GARMIN_BODY_ENERGY_SAMPLE WHERE TIMESTAMP >= ?1 AND TIMESTAMP < ?2 AND ENERGY BETWEEN 0 AND 100",
+            start * 1000, end * 1000
+        ) { Triple(it.intOrNull(0), it.intOrNull(1), it.intOrNull(2)) }.firstOrNull()
         return WatchActivityData(
             steps = steps,
             distanceKm = (km * 100).roundToInt() / 100f,
@@ -166,7 +179,12 @@ class GadgetbridgeExport(private val context: Context) {
             avgHeartRate = hr?.first,
             minHeartRate = hr?.second,
             maxHeartRate = hr?.third,
-            activeMinutes = activeMinutes
+            activeMinutes = activeMinutes,
+            avgStress = stress?.first,
+            maxStress = stress?.second,
+            bodyBattery = battery?.third,
+            bodyBatteryHigh = battery?.first,
+            bodyBatteryLow = battery?.second
         )
     }
 
@@ -182,6 +200,7 @@ class GadgetbridgeExport(private val context: Context) {
 
     private fun Cursor.intOrNull(i: Int): Int? = if (isNull(i)) null else getInt(i)
     private fun Cursor.longOrNull(i: Int): Long? = if (isNull(i)) null else getLong(i)
+    private fun Cursor.doubleOrNull(i: Int): Double? = if (isNull(i)) null else getDouble(i)
 
     companion object {
         private const val KEY_URI = "export_uri"

@@ -132,7 +132,14 @@ data class WatchActivityData(
     val minHeartRate: Int? = null,
     val maxHeartRate: Int? = null,
     /** Garmin intensity minutes (moderate + vigorous). */
-    val activeMinutes: Int? = null
+    val activeMinutes: Int? = null,
+    /** Garmin stress (0-100), the day's average and peak. */
+    val avgStress: Int? = null,
+    val maxStress: Int? = null,
+    /** Body Battery: the latest reading of the day, and the day's high and low. */
+    val bodyBattery: Int? = null,
+    val bodyBatteryHigh: Int? = null,
+    val bodyBatteryLow: Int? = null
 )
 
 data class SleepData(

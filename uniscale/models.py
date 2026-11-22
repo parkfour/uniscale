@@ -131,6 +131,12 @@ class DailyActivity(BaseModel):
     max_heart_rate: Optional[int] = None
     avg_spo2: Optional[float] = None
     heart_points: Optional[int] = None
+    # Garmin stress (0-100): the day's average and peak; Body Battery: the latest reading, the day's high and low
+    avg_stress: Optional[int] = Field(default=None, ge=0, le=100)
+    max_stress: Optional[int] = Field(default=None, ge=0, le=100)
+    body_battery: Optional[int] = Field(default=None, ge=0, le=100)
+    body_battery_high: Optional[int] = Field(default=None, ge=0, le=100)
+    body_battery_low: Optional[int] = Field(default=None, ge=0, le=100)
     source: str = "garmin"
 
 

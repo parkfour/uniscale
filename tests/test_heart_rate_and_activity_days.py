@@ -38,13 +38,20 @@ def test_heart_rate_and_activity_days_api(tmp_path, monkeypatch):
     hr = client.get("/api/heart_rate", params={"hours": 2}).json()
     assert hr["samples"] == [[1_800_000_000, 70]]  # 300 bpm is dropped
 
+    # A day's stress and Body Battery go in with the rest of its activity, and are range-checked
+    day = {"date": days[1], "steps": 8000, "avg_stress": 17, "max_stress": 84,
+           "body_battery": 31, "body_battery_high": 76, "body_battery_low": 26}
+    assert client.post("/api/sync/activity", json=day).status_code == 201
+    assert client.post("/api/sync/activity", json={**day, "avg_stress": 140}).status_code == 422
+
     listed = client.get("/api/activity/days").json()["days"]
+    assert listed[0]["avg_stress"] == 17 and listed[0]["body_battery_low"] == 26
     assert [d["date"] for d in listed] == [days[1], days[2]]  # yesterday first; today isn't complete
     assert client.get("/api/summary").json()["latest_resting_hr"] == {"bpm": 61, "date": days[2]}
 
     page = client.get("/").text
     assert 'id="history-table" style="display: none;"' in page and "toggleHistory" in page
-    assert "Sync Pipeline" not in page and "Zero Garmin Cloud" not in page
+    assert "Sync Pipeline" not in page and "Zero Garmin Cloud" not in page and "Average Stride" not in page
     # Cards in rows: sleep, ECG, supplements / counter, places, patterns / labs, genomics, bio age
     order = [page.index(m) for m in ("<!-- Sleep Architecture", "<!-- Lead-I ECG", "<!-- Daily Protocol",
                                      "<!-- Daily tap counter", "<!-- Dwell Places", "<!-- Patterns:",

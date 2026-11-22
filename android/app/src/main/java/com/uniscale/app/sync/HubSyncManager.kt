@@ -221,6 +221,11 @@ class HubSyncManager(
             activity.minHeartRate?.let { json.put("min_heart_rate", it) }
             activity.maxHeartRate?.let { json.put("max_heart_rate", it) }
             activity.activeMinutes?.let { json.put("active_minutes", it) }
+            activity.avgStress?.let { json.put("avg_stress", it) }
+            activity.maxStress?.let { json.put("max_stress", it) }
+            activity.bodyBattery?.let { json.put("body_battery", it) }
+            activity.bodyBatteryHigh?.let { json.put("body_battery_high", it) }
+            activity.bodyBatteryLow?.let { json.put("body_battery_low", it) }
 
             val success = postJson("${config.hubUrl.trimEnd('/')}/api/sync/activity", json, config.apiToken)
             if (success && finished) markSynced(key)

@@ -2522,9 +2522,15 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         <div class="stat-sub">${act.active_minutes != null ? 'Garmin intensity minutes' : 'Estimated from steps'}</div>
                     </div>
                     <div class="telemetry-card">
-                        <div class="stat-label">Average Stride / Cadence</div>
-                        <div class="telemetry-val" style="color: var(--accent-blue);">${f.stride} m</div>
-                        <div class="stat-sub">Distance ÷ steps</div>
+                        <div class="stat-label">Stress</div>
+                        <div class="telemetry-val" style="color: #8b5cf6;">${act.avg_stress ?? '--'}
+                            <span style="font-size: 14px; font-weight: 500;">${stressLevel(act.avg_stress)}</span></div>
+                        <div class="stat-sub">${act.max_stress != null ? `Today's average • peak ${act.max_stress}` : 'Today\'s average (0–100)'}</div>
+                    </div>
+                    <div class="telemetry-card">
+                        <div class="stat-label">Body Battery</div>
+                        <div class="telemetry-val" style="color: var(--accent-green);">${act.body_battery ?? '--'}</div>
+                        <div class="stat-sub">${act.body_battery_high != null ? `Now • today ${act.body_battery_low}–${act.body_battery_high}` : 'Latest reading (0–100)'}</div>
                     </div>
                     <div class="telemetry-card" style="grid-column: 1 / -1;">
                         <div class="stat-label">Heart Rate, Last Two Hours</div>
@@ -2534,7 +2540,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             `;
 
             thead.innerHTML = `<tr><th>Date</th><th>Steps</th><th>Distance</th><th>Energy</th><th>Resting HR</th>
-                <th>Active Time</th><th>Stride</th></tr>`;
+                <th>Active Time</th><th>Stress</th></tr>`;
             tbody.innerHTML = days.map(d => {
                 const g = watchDayFields(d);
                 return `<tr>
@@ -2544,19 +2550,24 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     <td>${g.energy} kcal</td>
                     <td style="color: var(--accent-green);">${d.resting_heart_rate ? d.resting_heart_rate + ' bpm' : '--'}</td>
                     <td>${g.active} min</td>
-                    <td>${g.stride} m</td>
+                    <td style="color: #8b5cf6;">${d.avg_stress != null ? `${d.avg_stress} <span style="color: var(--text-muted);">(peak ${d.max_stress ?? '--'})</span>` : '--'}</td>
                 </tr>`;
             }).join('') || '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No complete days recorded yet</td></tr>';
         }
 
         // A watch day's derived fields; energy and active time are estimated from steps ("≈") when the watch gave none.
         function watchDayFields(a) {
-            const steps = a.steps || 0, km = a.distance_km || 0;
+            const steps = a.steps || 0;
             return {
                 energy: a.calories ? a.calories : '≈' + Math.round(steps * 0.045),
                 active: a.active_minutes != null ? a.active_minutes : '≈' + Math.round(steps / 110),
-                stride: steps ? (km * 1000 / steps).toFixed(2) : '--',
             };
+        }
+
+        // Garmin's stress bands: 0-25 rest, 26-50 low, 51-75 medium, 76-100 high.
+        function stressLevel(v) {
+            if (v == null) return '';
+            return v <= 25 ? 'rest' : v <= 50 ? 'low' : v <= 75 ? 'medium' : 'high';
         }
 
         // The watch's heart rate as a line: samples = [[epoch seconds, bpm], ...] (about one a minute).

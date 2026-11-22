@@ -186,7 +186,8 @@ Ingest an ECG rhythm recording.
 Ingest daily summary statistics (steps, distance, heart rate). Records for the same `date` merge, so a day can be
 sent again as it fills up. The phone app sends Garmin's resting heart rate, the day's `avg_heart_rate`,
 `min_heart_rate` and `max_heart_rate` from the watch's per-minute samples, and `active_minutes` (Garmin intensity
-minutes, moderate + vigorous).
+minutes, moderate + vigorous), Garmin stress for the day (`avg_stress`, `max_stress`, 0-100) and Body Battery
+(`body_battery`, the latest reading, with the day's `body_battery_high` and `body_battery_low`).
 * **Status:** `201 Created`
 * **Payload:**
   ```json
