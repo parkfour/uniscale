@@ -26,8 +26,10 @@ import java.time.ZoneId
 data class GadgetbridgeData(
     val nights: List<SleepData>,
     val workouts: List<WorkoutData>,
-    /** Steps and distance for today and yesterday (when the watch recorded any), today first. */
-    val activity: List<WatchActivityData> = emptyList()
+    /** Steps, distance and heart rate for today and yesterday (when the watch recorded any), today first. */
+    val activity: List<WatchActivityData> = emptyList(),
+    /** The last day's heart rate, about one sample a minute: (epoch seconds, bpm), oldest first. */
+    val heartRate: List<Pair<Long, Int>> = emptyList()
 )
 
 class GadgetbridgeExport(private val context: Context) {
@@ -106,7 +108,13 @@ class GadgetbridgeExport(private val context: Context) {
                 val zone = ZoneId.systemDefault()
                 val today = LocalDate.now(zone)
                 val activity = listOf(today, today.minusDays(1)).mapNotNull { day -> dayActivity(db, day, zone) }
-                GadgetbridgeData(nights, workouts, activity)
+                val heartRate = rows(
+                    db,
+                    "SELECT TIMESTAMP, HEART_RATE FROM GARMIN_ACTIVITY_SAMPLE " +
+                        "WHERE TIMESTAMP >= ? AND HEART_RATE BETWEEN 30 AND 250 ORDER BY TIMESTAMP",
+                    System.currentTimeMillis() / 1000 - HEART_RATE_WINDOW_S
+                ) { it.getLong(0) to it.getInt(1) }
+                GadgetbridgeData(nights, workouts, activity, heartRate)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Could not read Gadgetbridge export: ${e.message}")
@@ -131,11 +139,34 @@ class GadgetbridgeExport(private val context: Context) {
         ) { (it.longOrNull(0) ?: 0L) to (it.longOrNull(1) ?: 0L) }.firstOrNull() ?: return null
         if (steps <= 0) return null
         val km = if (cm > 0) cm / 100_000.0 else steps * 0.85582 / 1000.0  // Garmin's stride when no distance
+        val hr = rows(
+            db,
+            "SELECT AVG(HEART_RATE), MIN(HEART_RATE), MAX(HEART_RATE) FROM GARMIN_ACTIVITY_SAMPLE " +
+                "WHERE TIMESTAMP > ? AND TIMESTAMP <= ? AND HEART_RATE BETWEEN 30 AND 250",
+            start, end
+        ) { Triple(it.intOrNull(0), it.intOrNull(1), it.intOrNull(2)) }.firstOrNull()
+        // These two tables keep their TIMESTAMP in milliseconds; the watch writes the day's resting rate several times.
+        val resting = rows(
+            db,
+            "SELECT HEART_RATE FROM GARMIN_HEART_RATE_RESTING_SAMPLE WHERE TIMESTAMP >= ? AND TIMESTAMP < ? " +
+                "AND HEART_RATE BETWEEN 25 AND 200 ORDER BY TIMESTAMP DESC LIMIT 1",
+            start * 1000, end * 1000
+        ) { it.getInt(0) }.firstOrNull()
+        val activeMinutes = rows(
+            db,
+            "SELECT SUM(MODERATE) + SUM(VIGOROUS) FROM GARMIN_INTENSITY_MINUTES_SAMPLE WHERE TIMESTAMP >= ? AND TIMESTAMP < ?",
+            start * 1000, end * 1000
+        ) { it.intOrNull(0) }.firstOrNull()
         return WatchActivityData(
             steps = steps,
             distanceKm = (km * 100).roundToInt() / 100f,
             deviceName = "Garmin",
-            date = day
+            date = day,
+            restingHeartRate = resting,
+            avgHeartRate = hr?.first,
+            minHeartRate = hr?.second,
+            maxHeartRate = hr?.third,
+            activeMinutes = activeMinutes
         )
     }
 
@@ -154,6 +185,8 @@ class GadgetbridgeExport(private val context: Context) {
 
     companion object {
         private const val KEY_URI = "export_uri"
+        /** How far back the heart-rate samples sent to the hub go. */
+        private const val HEART_RATE_WINDOW_S = 24 * 3600L
         private const val TAG = "GadgetbridgeExport"
     }
 }

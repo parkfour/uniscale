@@ -115,6 +115,15 @@ Device-tracked workouts for the dashboard's **Last Workout** tile.
 #### `GET /api/activity/today`
 Returns aggregated daily steps, distance, and energy expenditure for the current day.
 
+#### `GET /api/activity/days`
+Daily activity records, newest first, from yesterday (the last complete day) back `days` days (default 30):
+`{"days": [{"date": "2026-11-21", "steps": 9450, "distance_km": 7.12, "resting_heart_rate": 58, ...}]}`.
+
+#### `GET /api/heart_rate`
+The watch's heart rate over the `hours` (default 2, up to 48) before its newest sample:
+`{"samples": [[1795300000, 72], ...], "end": 1795307200}` (epoch seconds, bpm; `end` is `null` with no data).
+`GET /api/summary` also carries `latest_resting_hr`: `{"bpm": 58, "date": "2026-11-21"}` from the newest day that has one.
+
 ---
 
 ### Ingestion & Sync Endpoints
@@ -174,7 +183,10 @@ Ingest an ECG rhythm recording.
   ```
 
 #### `POST /api/sync/activity`
-Ingest daily summary statistics (steps, distance).
+Ingest daily summary statistics (steps, distance, heart rate). Records for the same `date` merge, so a day can be
+sent again as it fills up. The phone app sends Garmin's resting heart rate, the day's `avg_heart_rate`,
+`min_heart_rate` and `max_heart_rate` from the watch's per-minute samples, and `active_minutes` (Garmin intensity
+minutes, moderate + vigorous).
 * **Status:** `201 Created`
 * **Payload:**
   ```json
@@ -188,6 +200,11 @@ Ingest daily summary statistics (steps, distance).
     "source": "Garmin"
   }
   ```
+
+#### `POST /api/sync/heart_rate`
+The watch's recent heart rate, `{"samples": [[epoch seconds, bpm], ...]}` (up to 20000; outside 30-250 bpm is
+dropped). Kept in `heart_rate.json` next to the vault for the last 7 days, not in the vault; a sample sent again
+overwrites itself. The phone app sends the last 24 hours on every sync.
 
 #### `POST /api/sync/workout`
 Ingest a specific workout activity.

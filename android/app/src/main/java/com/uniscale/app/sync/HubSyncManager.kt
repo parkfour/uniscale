@@ -205,8 +205,9 @@ class HubSyncManager(
         if (!config.autoUploadHub || config.hubUrl.isBlank()) return@withContext false
 
         // Today's running total goes up on every sync; a finished day's final total only once.
+        // v2: days now carry heart rate and active minutes, so yesterday goes up once more with them.
         val finished = activity.date.isBefore(java.time.LocalDate.now())
-        val key = syncKey("act_${activity.date}")
+        val key = syncKey("act2_${activity.date}")
         if (finished && isSynced(key)) return@withContext true
 
         try {
@@ -215,12 +216,30 @@ class HubSyncManager(
             json.put("steps", activity.steps)
             json.put("distance_km", activity.distanceKm)
             json.put("source", activity.deviceName)
+            activity.restingHeartRate?.let { json.put("resting_heart_rate", it) }
+            activity.avgHeartRate?.let { json.put("avg_heart_rate", it) }
+            activity.minHeartRate?.let { json.put("min_heart_rate", it) }
+            activity.maxHeartRate?.let { json.put("max_heart_rate", it) }
+            activity.activeMinutes?.let { json.put("active_minutes", it) }
 
             val success = postJson("${config.hubUrl.trimEnd('/')}/api/sync/activity", json, config.apiToken)
             if (success && finished) markSynced(key)
             success
         } catch (e: Exception) {
             Log.e("HubSync", "Failed uploading watch activity: ${e.message}")
+            false
+        }
+    }
+
+    /** The watch's recent heart rate, (epoch seconds, bpm); the hub keeps a few days of it for its charts. */
+    suspend fun uploadHeartRate(samples: List<Pair<Long, Int>>): Boolean = withContext(Dispatchers.IO) {
+        val config = configManager.config.value
+        if (!config.autoUploadHub || config.hubUrl.isBlank() || samples.isEmpty()) return@withContext false
+        try {
+            val json = JSONObject().put("samples", JSONArray(samples.map { (t, bpm) -> JSONArray().put(t).put(bpm) }))
+            postJson("${config.hubUrl.trimEnd('/')}/api/sync/heart_rate", json, config.apiToken)
+        } catch (e: Exception) {
+            Log.e("HubSync", "Failed uploading heart rate: ${e.message}")
             false
         }
     }

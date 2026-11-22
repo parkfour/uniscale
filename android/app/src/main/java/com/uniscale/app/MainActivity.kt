@@ -238,6 +238,7 @@ class MainActivity : ComponentActivity() {
                     localWeights.forEach { w -> hubSyncManager.uploadWeight(w) }
                     localBps.forEach { b -> hubSyncManager.uploadBloodPressure(b) }
                     watch?.activity?.forEach { a -> hubSyncManager.uploadWatchActivity(a) }
+                    watch?.heartRate?.let { hubSyncManager.uploadHeartRate(it) }
                     watch?.nights?.forEach { s -> hubSyncManager.uploadSleepSession(s) }
                     watch?.workouts?.forEach { w -> hubSyncManager.uploadWorkout(w) }
                 }

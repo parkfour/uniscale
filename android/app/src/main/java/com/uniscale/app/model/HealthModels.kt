@@ -125,7 +125,14 @@ data class WatchActivityData(
     val calories: Long = 0,
     val deviceName: String = "Garmin",
     val timestamp: Instant = Instant.now(),
-    val date: java.time.LocalDate = java.time.LocalDate.now()
+    val date: java.time.LocalDate = java.time.LocalDate.now(),
+    /** Garmin's resting heart rate for the day, and the day's average / lowest / highest from the per-minute samples. */
+    val restingHeartRate: Int? = null,
+    val avgHeartRate: Int? = null,
+    val minHeartRate: Int? = null,
+    val maxHeartRate: Int? = null,
+    /** Garmin intensity minutes (moderate + vigorous). */
+    val activeMinutes: Int? = null
 )
 
 data class SleepData(

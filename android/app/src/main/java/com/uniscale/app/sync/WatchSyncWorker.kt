@@ -31,6 +31,7 @@ class WatchSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         watch?.nights?.forEach { hub.uploadSleepSession(it) }
         watch?.workouts?.forEach { hub.uploadWorkout(it) }
         watch?.activity?.forEach { hub.uploadWatchActivity(it) }
+        watch?.heartRate?.let { hub.uploadHeartRate(it) }
 
         val readings = LocalReadings(applicationContext)
         readings.weights().forEach { hub.uploadWeight(it) }

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conlist
 from uniscale.config import ProfileConfig, UniscaleConfig, current_user, load_config, load_profile, normalize_user, save_profile, vault_db_path
 from uniscale.models import (
     ActivityWorkout,
@@ -174,6 +174,11 @@ class CounterHistoryImportRequest(BaseModel):
     entries: List[Dict[str, Any]]
 
 
+class HeartRateSyncRequest(BaseModel):
+    # [[epoch seconds, bpm], ...]: a few days at one a minute at most
+    samples: List[conlist(int, min_length=2, max_length=2)] = Field(max_length=20000)
+
+
 class UpdatePlaceRequest(BaseModel):
     name: Optional[str] = None
     poi_type: Optional[str] = None
@@ -312,6 +317,8 @@ def get_summary():
         "latest_lab": latest_lab,
         "latest_sleep": latest_sleep,
         "latest_workout": latest_workout,
+        "latest_resting_hr": next(({"bpm": r["resting_heart_rate"], "date": r.get("date")} for r in reversed(records)
+                                   if r.get("type") == "activity" and r.get("resting_heart_rate")), None),
         "supplements": supp_summary,
         "genomics": gen_profile,
         "counter": counter_state,
@@ -433,6 +440,32 @@ def sync_activity(data: DailyActivity):
     d["type"] = "activity"
     append_record(d)
     return {"status": "saved", "id": d.get("date")}
+
+
+@app.post("/api/sync/heart_rate", status_code=status.HTTP_201_CREATED)
+def sync_heart_rate(req: HeartRateSyncRequest):
+    """The watch's recent heart rate; samples outside 30-250 bpm are dropped."""
+    from uniscale.heart_rate import add_samples
+    kept = add_samples([(t, bpm) for t, bpm in req.samples if 30 <= bpm <= 250], db_path=get_db_path())
+    return {"status": "saved", "kept": kept}
+
+
+@app.get("/api/heart_rate")
+def get_heart_rate(hours: float = 2):
+    """The watch's heart rate over the `hours` (up to 48) before its newest sample."""
+    from uniscale.heart_rate import recent
+    return recent(max(0.25, min(hours, 48)), db_path=get_db_path())
+
+
+@app.get("/api/activity/days")
+def get_activity_days(days: int = 30):
+    """Daily watch activity, newest first, from yesterday (the last complete day) back `days` days."""
+    from datetime import date, timedelta
+    today = date.today()
+    oldest = (today - timedelta(days=max(1, min(days, 366)))).isoformat()
+    rows = [r for r in load_all_records()
+            if r.get("type") == "activity" and oldest <= str(r.get("date") or "") < today.isoformat()]
+    return {"days": sorted(rows, key=lambda r: r["date"], reverse=True)}
 
 
 @app.post("/api/sync/workout", status_code=status.HTTP_201_CREATED)
@@ -1074,6 +1107,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         .badge.mtls { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); }
         .badge.interactive { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.3); }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin-bottom: 24px; }
+        @media (min-width: 1000px) { .grid { grid-template-columns: repeat(3, 1fr); } }  /* rows of three on a wide screen */
         .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); }
         .card.clickable { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease; position: relative; }
         .card.clickable:hover { transform: translateY(-3px); box-shadow: 0 10px 24px -4px rgba(0, 0, 0, 0.45); border-color: rgba(255, 255, 255, 0.25); }
@@ -1497,8 +1531,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                         <div class="metric-sub">Distance</div>
                     </div>
                     <div>
-                        <div class="metric-main" style="color: var(--accent-green);">Direct BLE</div>
-                        <div class="metric-sub">Zero Garmin Cloud</div>
+                        <div class="metric-main" style="color: var(--accent-red);" id="garmin-rhr">-- <span style="font-size: 18px; font-weight: 500;">bpm</span></div>
+                        <div class="metric-sub" id="garmin-rhr-sub">Resting Heart Rate</div>
                     </div>
                 </div>
             </div>
@@ -1547,50 +1581,6 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <div class="metric-sub" style="margin-top: 8px;" id="bp-ts">Awaiting cuff reading</div>
             </div>
 
-            <!-- Lead-I ECG Card -->
-            <div class="card" style="border-top: 3px solid var(--accent-blue);">
-                <div class="card-header">
-                    <span class="card-title">Lead-I ECG (Viatom BP2)</span>
-                    <span class="badge" id="ecg-hr">125 Hz Lead-I</span>
-                </div>
-                <div class="canvas-container">
-                    <canvas id="ecgCanvas"></canvas>
-                </div>
-                <div class="metric-sub" style="margin-top: 8px; display: flex; justify-content: space-between;">
-                    <span id="ecg-status">Normal Sinus Rhythm</span>
-                    <span id="ecg-ts">Saved trace</span>
-                </div>
-            </div>
-
-            <!-- Clinical Labs & Blood Biomarkers Card -->
-            <div class="card clickable" style="border-top: 3px solid #10b981;" onclick="openLabModal()">
-                <div class="card-header">
-                    <span class="card-title">Clinical Labs & Biomarkers</span>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span class="click-hint">Click for panel ↗</span>
-                        <span class="badge" id="lab-provider" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">--</span>
-                    </div>
-                </div>
-                <div class="metric-main" id="lab-main">-- <span style="font-size: 18px; font-weight: 500;">Biomarkers</span></div>
-                <div class="metric-sub" id="lab-highlights" style="color: var(--text-main); font-weight: 500; margin-top: 4px;">Awaiting lab results</div>
-                <div class="metric-sub" style="margin-top: 8px;" id="lab-ts">Awaiting report import</div>
-            </div>
-
-            <!-- Biological Age & Longevity Card -->
-            <div class="card clickable" style="border-top: 3px solid #06b6d4;" onclick="openLongevityModal()">
-                <div class="card-header">
-                    <span class="card-title">Biological Age & Longevity</span>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span class="click-hint">Click for trajectory ↗</span>
-                        <span class="badge" id="longevity-badge" style="background: rgba(6, 182, 212, 0.15); color: #06b6d4; border-color: rgba(6, 182, 212, 0.3);">--</span>
-                    </div>
-                </div>
-                <div class="metric-main" id="pheno-age-val">-- <span style="font-size: 18px; font-weight: 500;">PhenoAge</span></div>
-                <div class="metric-sub" id="pheno-age-sub" style="color: var(--accent-green); font-weight: 600;">Awaiting lab results</div>
-                <div class="metric-sub" style="margin-top: 4px; opacity: 0.75;" id="pheno-age-basis"></div>
-                <div class="metric-sub" style="margin-top: 8px;" id="ascvd-summary">10-Yr ASCVD Risk: --</div>
-            </div>
-
             <!-- Sleep Architecture & Recovery Card -->
             <div class="card clickable" style="border-top: 3px solid #8b5cf6;" onclick="openSleepModal()">
                 <div class="card-header">
@@ -1615,6 +1605,21 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 </div>
             </div>
 
+            <!-- Lead-I ECG Card -->
+            <div class="card" style="border-top: 3px solid var(--accent-blue);">
+                <div class="card-header">
+                    <span class="card-title">Lead-I ECG (Viatom BP2)</span>
+                    <span class="badge" id="ecg-hr">125 Hz Lead-I</span>
+                </div>
+                <div class="canvas-container">
+                    <canvas id="ecgCanvas"></canvas>
+                </div>
+                <div class="metric-sub" style="margin-top: 8px; display: flex; justify-content: space-between;">
+                    <span id="ecg-status">Normal Sinus Rhythm</span>
+                    <span id="ecg-ts">Saved trace</span>
+                </div>
+            </div>
+
             <!-- Daily Protocol & Supplements Tracker Card -->
             <div class="card clickable" style="border-top: 3px solid #f59e0b;" onclick="openSupplementsModal()">
                 <div class="card-header">
@@ -1629,22 +1634,6 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     <div style="font-size: 12px; color: var(--text-muted);">Loading active stack...</div>
                 </div>
                 <div class="metric-sub" style="margin-top: 8px;" id="supp-footer">Personalized Regimen • Click to edit or consult Dr. Gemma</div>
-            </div>
-
-            <!-- Sovereign Genomics & Pharmacogenomics Card -->
-            <div class="card clickable" style="border-top: 3px solid #ec4899;" onclick="openGenomicsModal()">
-                <div class="card-header">
-                    <span class="card-title">Genomics & Pharmacogenomics</span>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span class="click-hint">Click for profile ↗</span>
-                        <span class="badge" id="gen-badge" style="background: rgba(236, 72, 153, 0.15); color: #ec4899;">DNA</span>
-                    </div>
-                </div>
-                <div class="metric-main" id="gen-main" style="font-size: 28px;">--</div>
-                <div class="metric-sub" id="gen-highlights" style="color: var(--text-main); font-weight: 500; font-size: 12px; margin-top: 6px;">
-                    Awaiting raw DNA import
-                </div>
-                <div class="metric-sub" style="margin-top: 8px;" id="gen-footer">100% Offline Sovereign DNA Screening</div>
             </div>
 
             <!-- Daily tap counter card: title and buttons come from the profile's counter set -->
@@ -1662,20 +1651,6 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <div id="counter-elements" style="display: flex; flex-wrap: wrap; justify-content: space-around; align-items: center; gap: 8px; margin-top: 10px;"></div>
                 <div id="counter-week" style="display: flex; gap: 6px; justify-content: space-between; margin-top: 12px;"></div>
                 <div class="metric-sub" style="margin-top: 12px; text-align: center;" id="counter-footer"></div>
-            </div>
-
-            <!-- Patterns: correlations the hub found between counters, places and health (hidden until there's a log) -->
-            <div class="card" id="patterns-card" style="border-top: 3px solid #14b8a6; display: none;">
-                <div class="card-header">
-                    <span class="card-title">
-                        <span style="color: #14b8a6; font-size: 18px;">●</span>
-                        Patterns
-                    </span>
-                    <span class="badge" id="patterns-badge" style="background: rgba(20, 184, 166, 0.15); color: #14b8a6; border-color: rgba(20, 184, 166, 0.3);">90 days</span>
-                    <button id="patterns-refresh" class="ai-header-btn plain" style="font-size: 11px; padding: 2px 8px; margin-left: 6px;" onclick="loadPatterns()" title="Recompute the patterns from the latest data">Refresh</button>
-                </div>
-                <ul id="patterns-list" style="margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5;"></ul>
-                <div class="metric-sub" style="margin-top: 8px;">Correlations, not causes. Ask <span class="assistant-name">Dr. Gemma</span> what they mean.</div>
             </div>
 
             <!-- Dwell Places (>1 hr Yesterday) Card -->
@@ -1696,15 +1671,75 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 </div>
                 <div class="metric-sub" style="margin-top: 10px;" id="places-footer">Newest first • 1 hr or more in one spot</div>
             </div>
+
+            <!-- Patterns: correlations the hub found between counters, places and health (hidden until there's a log) -->
+            <div class="card" id="patterns-card" style="border-top: 3px solid #14b8a6; display: none;">
+                <div class="card-header">
+                    <span class="card-title">
+                        <span style="color: #14b8a6; font-size: 18px;">●</span>
+                        Patterns
+                    </span>
+                    <span class="badge" id="patterns-badge" style="background: rgba(20, 184, 166, 0.15); color: #14b8a6; border-color: rgba(20, 184, 166, 0.3);">90 days</span>
+                    <button id="patterns-refresh" class="ai-header-btn plain" style="font-size: 11px; padding: 2px 8px; margin-left: 6px;" onclick="loadPatterns()" title="Recompute the patterns from the latest data">Refresh</button>
+                </div>
+                <ul id="patterns-list" style="margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5;"></ul>
+                <div class="metric-sub" style="margin-top: 8px;">Correlations, not causes. Ask <span class="assistant-name">Dr. Gemma</span> what they mean.</div>
+            </div>
+
+            <!-- Clinical Labs & Blood Biomarkers Card -->
+            <div class="card clickable" style="border-top: 3px solid #10b981;" onclick="openLabModal()">
+                <div class="card-header">
+                    <span class="card-title">Clinical Labs & Biomarkers</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="click-hint">Click for panel ↗</span>
+                        <span class="badge" id="lab-provider" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">--</span>
+                    </div>
+                </div>
+                <div class="metric-main" id="lab-main">-- <span style="font-size: 18px; font-weight: 500;">Biomarkers</span></div>
+                <div class="metric-sub" id="lab-highlights" style="color: var(--text-main); font-weight: 500; margin-top: 4px;">Awaiting lab results</div>
+                <div class="metric-sub" style="margin-top: 8px;" id="lab-ts">Awaiting report import</div>
+            </div>
+
+            <!-- Sovereign Genomics & Pharmacogenomics Card -->
+            <div class="card clickable" style="border-top: 3px solid #ec4899;" onclick="openGenomicsModal()">
+                <div class="card-header">
+                    <span class="card-title">Genomics & Pharmacogenomics</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="click-hint">Click for profile ↗</span>
+                        <span class="badge" id="gen-badge" style="background: rgba(236, 72, 153, 0.15); color: #ec4899;">DNA</span>
+                    </div>
+                </div>
+                <div class="metric-main" id="gen-main" style="font-size: 28px;">--</div>
+                <div class="metric-sub" id="gen-highlights" style="color: var(--text-main); font-weight: 500; font-size: 12px; margin-top: 6px;">
+                    Awaiting raw DNA import
+                </div>
+                <div class="metric-sub" style="margin-top: 8px;" id="gen-footer">100% Offline Sovereign DNA Screening</div>
+            </div>
+
+            <!-- Biological Age & Longevity Card -->
+            <div class="card clickable" style="border-top: 3px solid #06b6d4;" onclick="openLongevityModal()">
+                <div class="card-header">
+                    <span class="card-title">Biological Age & Longevity</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="click-hint">Click for trajectory ↗</span>
+                        <span class="badge" id="longevity-badge" style="background: rgba(6, 182, 212, 0.15); color: #06b6d4; border-color: rgba(6, 182, 212, 0.3);">--</span>
+                    </div>
+                </div>
+                <div class="metric-main" id="pheno-age-val">-- <span style="font-size: 18px; font-weight: 500;">PhenoAge</span></div>
+                <div class="metric-sub" id="pheno-age-sub" style="color: var(--accent-green); font-weight: 600;">Awaiting lab results</div>
+                <div class="metric-sub" style="margin-top: 4px; opacity: 0.75;" id="pheno-age-basis"></div>
+                <div class="metric-sub" style="margin-top: 8px;" id="ascvd-summary">10-Yr ASCVD Risk: --</div>
+            </div>
         </div>
 
         <!-- History Feed -->
         <div class="card">
-            <div class="card-header">
-                <span class="card-title">Imported Health History (Google Fit, Garmin, Scales, BP2)</span>
+            <div class="card-header" style="cursor: pointer;" role="button" tabindex="0" aria-expanded="false" aria-controls="history-table"
+                 onclick="toggleHistory(this)" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleHistory(this); }">
+                <span class="card-title"><span id="history-caret" style="display: inline-block; width: 14px;">▸</span> Imported Health History (Google Fit, Garmin, Scales, BP2)</span>
                 <span class="metric-sub" id="record-count">Loading...</span>
             </div>
-            <table class="history-table">
+            <table class="history-table" id="history-table" style="display: none;">
                 <thead>
                     <tr>
                         <th>Date & Time</th>
@@ -1864,6 +1899,12 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     }
                     if (act.distance_km !== undefined && act.distance_km !== null) {
                         document.getElementById('garmin-dist').innerText = `${act.distance_km} km`;
+                    }
+                    if (data.latest_resting_hr) {
+                        const r = data.latest_resting_hr;
+                        document.getElementById('garmin-rhr').innerHTML = `${r.bpm} <span style="font-size: 18px; font-weight: 500;">bpm</span>`;
+                        document.getElementById('garmin-rhr-sub').innerText =
+                            r.date === act.date ? 'Resting Heart Rate' : `Resting Heart Rate (${r.date})`;
                     }
                     if (act.source) {
                         const badge = document.getElementById('garmin-badge');
@@ -2195,6 +2236,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.period === 'week'));
             document.getElementById('modalTitle').innerText = 'Weight & Body Composition';
             document.getElementById('modalSubtitle').innerText = 'Trends for Weight (lb/kg), BMI, Body Fat %, and Impedance';
+            document.getElementById('modalTableTitle').innerText = 'Recordings';
             document.getElementById('modalFilterRow').style.display = 'flex';
             document.getElementById('modalChartCard').style.display = 'block';
             document.getElementById('modalDeviceTelemetry').style.display = 'none';
@@ -2306,6 +2348,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.period === 'week'));
             document.getElementById('modalTitle').innerText = 'Blood Pressure & Heart Rate';
             document.getElementById('modalSubtitle').innerText = 'Trends for Systolic, Diastolic, and Pulse';
+            document.getElementById('modalTableTitle').innerText = 'Recordings';
             document.getElementById('modalFilterRow').style.display = 'flex';
             document.getElementById('modalChartCard').style.display = 'block';
             document.getElementById('modalDeviceTelemetry').style.display = 'none';
@@ -2424,16 +2467,19 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             currentModalType = 'device';
             document.getElementById('modalTitle').innerText = 'Watch – Daily Telemetry';
             document.getElementById('modalSubtitle').innerText = 'Full breakdown of daily metrics collected from the watch';
+            document.getElementById('modalTableTitle').innerText = 'Daily History (from yesterday back)';
             document.getElementById('modalFilterRow').style.display = 'none';
             document.getElementById('modalChartCard').style.display = 'none';
             document.getElementById('modalDeviceTelemetry').style.display = 'block';
 
             openModal();
 
-            const res = await fetch('/api/activity/today');
+            const [res, hrRes, daysRes] = await Promise.all([
+                fetch('/api/activity/today'), fetch('/api/heart_rate?hours=2'), fetch('/api/activity/days?days=30')]);
             const data = esc(await res.json());
+            const hr = hrRes.ok ? await hrRes.json() : { samples: [] };
+            const days = daysRes.ok ? esc(await daysRes.json()).days || [] : [];
             const act = data.activity || {};
-            const workouts = data.workouts || [];
 
             const statsGrid = document.getElementById('modalStatsGrid');
             const telemContainer = document.getElementById('modalDeviceTelemetry');
@@ -2442,9 +2488,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
 
             const steps = act.steps || 0;
             const distKm = act.distance_km || 0;
-            const cal = act.calories || Math.round(steps * 0.045);
-            const activeMin = act.active_minutes || Math.round(steps / 110);
             const rhr = act.resting_heart_rate || '--';
+            const f = watchDayFields(act);
 
             statsGrid.innerHTML = `
                 <div class="stat-box">
@@ -2459,8 +2504,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Energy Burned</div>
-                    <div class="stat-value" style="color: var(--accent-red);">${cal} <span style="font-size: 13px;">kcal</span></div>
-                    <div class="stat-sub">Active & basal energy</div>
+                    <div class="stat-value" style="color: var(--accent-red);">${f.energy} <span style="font-size: 13px;">kcal</span></div>
+                    <div class="stat-sub">${act.calories ? 'Active & basal energy' : 'Estimated from steps'}</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Resting Heart Rate</div>
@@ -2473,46 +2518,76 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 <div class="telemetry-grid">
                     <div class="telemetry-card">
                         <div class="stat-label">Active Intensity Time</div>
-                        <div class="telemetry-val" style="color: var(--accent-orange);">${activeMin} min</div>
-                        <div class="stat-sub">Brisk walking & active workouts</div>
+                        <div class="telemetry-val" style="color: var(--accent-orange);">${f.active} min</div>
+                        <div class="stat-sub">${act.active_minutes != null ? 'Garmin intensity minutes' : 'Estimated from steps'}</div>
                     </div>
                     <div class="telemetry-card">
                         <div class="stat-label">Average Stride / Cadence</div>
-                        <div class="telemetry-val" style="color: var(--accent-blue);">${steps ? (distKm * 1000 / steps).toFixed(2) : '--'} m</div>
+                        <div class="telemetry-val" style="color: var(--accent-blue);">${f.stride} m</div>
                         <div class="stat-sub">Distance ÷ steps</div>
                     </div>
-                    <div class="telemetry-card">
-                        <div class="stat-label">Sync Pipeline</div>
-                        <div class="telemetry-val" style="color: var(--accent-green); font-size: 18px;">Direct Local Link</div>
-                        <div class="stat-sub">Watch → Gadgetbridge → UniScale Hub</div>
+                    <div class="telemetry-card" style="grid-column: 1 / -1;">
+                        <div class="stat-label">Heart Rate, Last Two Hours</div>
+                        ${hrChartSvg(hr.samples || [])}
                     </div>
                 </div>
             `;
 
-            thead.innerHTML = `<tr><th>Time / Date</th><th>Sport / Activity</th><th>Distance & Duration</th><th>Device Source</th></tr>`;
-            tbody.innerHTML = '';
+            thead.innerHTML = `<tr><th>Date</th><th>Steps</th><th>Distance</th><th>Energy</th><th>Resting HR</th>
+                <th>Active Time</th><th>Stride</th></tr>`;
+            tbody.innerHTML = days.map(d => {
+                const g = watchDayFields(d);
+                return `<tr>
+                    <td style="font-weight: 600;">${d.date}</td>
+                    <td>${(d.steps || 0).toLocaleString()}</td>
+                    <td style="color: var(--accent-blue);">${d.distance_km || 0} km</td>
+                    <td>${g.energy} kcal</td>
+                    <td style="color: var(--accent-green);">${d.resting_heart_rate ? d.resting_heart_rate + ' bpm' : '--'}</td>
+                    <td>${g.active} min</td>
+                    <td>${g.stride} m</td>
+                </tr>`;
+            }).join('') || '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No complete days recorded yet</td></tr>';
+        }
 
-            if (workouts.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td style="color: var(--text-muted);">${act.date || 'Today'}</td>
-                        <td><span class="tag tag-garmin">All-Day Pedometer</span></td>
-                        <td style="font-weight: 600;">${steps.toLocaleString()} steps (${distKm} km)</td>
-                        <td style="color: var(--text-muted);">${act.source || 'Garmin'}</td>
-                    </tr>
-                `;
-            } else {
-                workouts.forEach(w => {
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td style="color: var(--text-muted);">${(w.timestamp || '').substring(0, 19).replace('T', ' ')}</td>
-                        <td><span class="tag tag-garmin">${(w.sport || 'Workout').toUpperCase()}</span></td>
-                        <td style="font-weight: 600;">${(w.distance_km || (w.distance_meters/1000)).toFixed(2)} km in ${(w.duration_seconds/60).toFixed(1)} min (HR: ${w.avg_heart_rate || '--'} bpm)</td>
-                        <td style="color: var(--text-muted);">${w.device_name || 'Garmin'}</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
+        // A watch day's derived fields; energy and active time are estimated from steps ("≈") when the watch gave none.
+        function watchDayFields(a) {
+            const steps = a.steps || 0, km = a.distance_km || 0;
+            return {
+                energy: a.calories ? a.calories : '≈' + Math.round(steps * 0.045),
+                active: a.active_minutes != null ? a.active_minutes : '≈' + Math.round(steps / 110),
+                stride: steps ? (km * 1000 / steps).toFixed(2) : '--',
+            };
+        }
+
+        // The watch's heart rate as a line: samples = [[epoch seconds, bpm], ...] (about one a minute).
+        function hrChartSvg(samples) {
+            if (samples.length < 2) {
+                return '<div class="stat-sub" style="margin-top: 8px;">No heart rate from the watch in the last two hours of data yet.</div>';
             }
+            const W = 600, H = 160, padL = 34, padR = 8, padT = 10, padB = 22;
+            const t0 = samples[0][0], t1 = samples[samples.length - 1][0];
+            const bpms = samples.map(s => s[1]);
+            const lo = Math.floor((Math.min(...bpms) - 5) / 10) * 10, hi = Math.ceil((Math.max(...bpms) + 5) / 10) * 10;
+            const x = t => padL + (t - t0) / Math.max(t1 - t0, 1) * (W - padL - padR);
+            const y = v => padT + (hi - v) / (hi - lo) * (H - padT - padB);
+            // A gap of more than 5 minutes (watch off the wrist, no signal) breaks the line.
+            let path = '';
+            samples.forEach(([t, v], i) => {
+                path += (i && t - samples[i - 1][0] <= 300 ? 'L' : 'M') + x(t).toFixed(1) + ',' + y(v).toFixed(1);
+            });
+            const clock = t => new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const ticks = [lo, Math.round((lo + hi) / 2), hi].map(v =>
+                `<text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="#64748b">${v}</text>
+                 <line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border-color)"/>`).join('');
+            const avg = Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length);
+            return `<svg viewBox="0 0 ${W} ${H}" style="width: 100%; height: auto; margin-top: 6px;" role="img"
+                    aria-label="Heart rate from ${clock(t0)} to ${clock(t1)}: ${Math.min(...bpms)} to ${Math.max(...bpms)} bpm, average ${avg}">
+                    ${ticks}
+                    <path d="${path}" fill="none" stroke="#ef4444" stroke-width="2" stroke-linejoin="round"/>
+                    <text x="${padL}" y="${H - 6}" font-size="11" fill="#64748b">${clock(t0)}</text>
+                    <text x="${W - padR}" y="${H - 6}" font-size="11" fill="#64748b" text-anchor="end">${clock(t1)}</text>
+                </svg>
+                <div class="stat-sub">${Math.min(...bpms)}–${Math.max(...bpms)} bpm, average ${avg} • until ${clock(t1)}</div>`;
         }
 
         /* 4. Clinical Labs Modal */
@@ -3925,6 +4000,15 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         const counterColor = i => COUNTER_COLORS[i % COUNTER_COLORS.length];
         let counterState = null;  // last /api/counter response, escaped
 
+        // The history table starts collapsed; its title opens and closes it.
+        function toggleHistory(header) {
+            const table = document.getElementById('history-table');
+            const open = table.style.display === 'none';
+            table.style.display = open ? '' : 'none';
+            header.setAttribute('aria-expanded', String(open));
+            document.getElementById('history-caret').innerText = open ? '▾' : '▸';
+        }
+
         async function fetchCounter() {
             const res = await fetch('/api/counter');
             return esc(await res.json());
@@ -4575,8 +4659,11 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 return;
             }
 
+            // Blood pressure (a third series, the pulse): systolic and diastolic share the pressure axis on
+            // the left, the pulse gets its own axis on the right.
+            const pulse3 = color3 ? dataPoints.filter(d => d.val3 > 0) : [];
             const padLeft = 45;
-            const padRight = 20;
+            const padRight = pulse3.length ? 45 : 20;
             const padTop = 20;
             const padBottom = 30;
             const plotW = w - padLeft - padRight;
@@ -4591,7 +4678,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             }
 
             // Calculate min/max for primary series
-            const vals1 = dataPoints.map(d => d.val1);
+            const vals1 = dataPoints.map(d => d.val1).concat(color3 ? dataPoints.map(d => d.val2).filter(v => v != null) : []);
             let min1 = Math.min(...vals1);
             let max1 = Math.max(...vals1);
             if (min1 === max1) { min1 -= 5; max1 += 5; }
@@ -4605,6 +4692,28 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 const y = padTop + (plotH / 4) * i;
                 const v = max1 - (range1 / 4) * i;
                 ctx.fillText(v.toFixed(0), padLeft - 8, y + 4);
+            }
+            let min3 = 0, range3 = 1;
+            if (pulse3.length) {
+                const vals3 = pulse3.map(d => d.val3);
+                min3 = Math.min(...vals3);
+                let max3 = Math.max(...vals3);
+                if (min3 === max3) { min3 -= 5; max3 += 5; }
+                range3 = max3 - min3;
+                ctx.fillStyle = color3;
+                ctx.textAlign = 'left';
+                for (let i = 0; i <= 4; i++) {
+                    const y = padTop + (plotH / 4) * i;
+                    ctx.fillText((max3 - (range3 / 4) * i).toFixed(0), w - padRight + 8, y + 4);
+                }
+                ctx.font = '10px sans-serif';
+                ctx.fillStyle = '#64748b';
+                ctx.textAlign = 'left';
+                ctx.fillText('mmHg', 2, padTop - 8);
+                ctx.textAlign = 'right';
+                ctx.fillStyle = color3;
+                ctx.fillText('bpm', w - 2, padTop - 8);
+                ctx.font = '11px sans-serif';
             }
 
             // Single Data Point handling
@@ -4675,7 +4784,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 let max2 = Math.max(...vals2);
                 if (min2 === max2) { min2 -= 2; max2 += 2; }
                 const range2 = max2 - min2;
-                const getY2 = (v) => padTop + plotH - ((v - min2) / range2) * plotH;
+                // Blood pressure: diastolic is on the same pressure axis as systolic
+                const getY2 = color3 ? getY1 : (v) => padTop + plotH - ((v - min2) / range2) * plotH;
 
                 ctx.strokeStyle = color2;
                 ctx.lineWidth = 2;
@@ -4692,13 +4802,8 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             }
 
             // Plot tertiary series if present (val3, e.g. pulse)
-            const points3 = dataPoints.filter(d => d.val3 > 0);  // readings without a pulse are skipped
-            if (color3 && points3.length) {
-                const vals3 = points3.map(d => d.val3);
-                let min3 = Math.min(...vals3);
-                let max3 = Math.max(...vals3);
-                if (min3 === max3) { min3 -= 5; max3 += 5; }
-                const range3 = max3 - min3;
+            const points3 = pulse3;  // readings without a pulse are skipped
+            if (points3.length) {
                 const getY3 = (v) => padTop + plotH - ((v - min3) / range3) * plotH;
 
                 ctx.strokeStyle = color3;
