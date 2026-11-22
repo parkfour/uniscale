@@ -287,7 +287,42 @@ fun WatchFull(watchActivity: WatchActivityData?, modifier: Modifier = Modifier) 
                     fontSize = 14.sp
                 )
             }
+
+            // Resting heart rate, stress and Body Battery, when the watch has them for today
+            val a = watchActivity
+            if (a != null && (a.restingHeartRate != null || a.avgStress != null || a.bodyBattery != null)) {
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                    WatchStat(a.restingHeartRate?.let { "$it" }, "bpm", "Resting HR", Color(0xFFEF4444))
+                    WatchStat(a.avgStress?.let { "$it" }, a.avgStress?.let(::stressLevel), "Stress",
+                        Color(0xFF8B5CF6), a.maxStress?.let { "peak $it" })
+                    WatchStat(a.bodyBattery?.let { "$it" }, null, "Body Battery", Color(0xFF10B981),
+                        if (a.bodyBatteryLow != null && a.bodyBatteryHigh != null) "today ${a.bodyBatteryLow}–${a.bodyBatteryHigh}" else null)
+                }
+            }
         }
+    }
+}
+
+/** Garmin's stress bands: 0-25 rest, 26-50 low, 51-75 medium, 76-100 high. */
+fun stressLevel(v: Int): String = when {
+    v <= 25 -> "rest"
+    v <= 50 -> "low"
+    v <= 75 -> "medium"
+    else -> "high"
+}
+
+@Composable
+private fun WatchStat(value: String?, unit: String?, label: String, color: Color, note: String? = null) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(value ?: "--", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = color)
+            unit?.let { Text(" $it", fontSize = 13.sp, color = color, modifier = Modifier.padding(bottom = 3.dp)) }
+        }
+        Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.outline)
+        note?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.outline) }
     }
 }
 

@@ -136,8 +136,7 @@ class GadgetbridgeExport(private val context: Context) {
             db,
             "SELECT MAX(STEPS), MAX(DISTANCE_CM) FROM GARMIN_ACTIVITY_SAMPLE WHERE TIMESTAMP > ? AND TIMESTAMP <= ?",
             start, end
-        ) { (it.longOrNull(0) ?: 0L) to (it.longOrNull(1) ?: 0L) }.firstOrNull() ?: return null
-        if (steps <= 0) return null
+        ) { (it.longOrNull(0) ?: 0L) to (it.longOrNull(1) ?: 0L) }.firstOrNull() ?: (0L to 0L)
         val km = if (cm > 0) cm / 100_000.0 else steps * 0.85582 / 1000.0  // Garmin's stride when no distance
         val hr = rows(
             db,
@@ -145,6 +144,7 @@ class GadgetbridgeExport(private val context: Context) {
                 "WHERE TIMESTAMP > ? AND TIMESTAMP <= ? AND HEART_RATE BETWEEN 30 AND 250",
             start, end
         ) { Triple(it.intOrNull(0), it.intOrNull(1), it.intOrNull(2)) }.firstOrNull()
+        if (steps <= 0 && hr?.first == null) return null  // nothing from the watch that day (yet)
         // These two tables keep their TIMESTAMP in milliseconds; the watch writes the day's resting rate several times.
         val resting = rows(
             db,
