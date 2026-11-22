@@ -33,6 +33,7 @@ The mobile application is structured around reactive state streams and offline-f
 * **`com.uniscale.app.ble.BleManager`**: Handles BLE scanning, connection lifecycle, MTU negotiation, GATT characteristic subscription, packet routing, and packet reassembly.
 * **`com.uniscale.app.ble.DeviceDecoders`**: Byte-level parsers for body composition, impedance, blood pressure, and real-time ECG packets.
 * **`com.uniscale.app.sync.GadgetbridgeExport`**: Reads sleep, workouts and daily steps/distance from Gadgetbridge's auto-exported database.
+* **`com.uniscale.app.sync.GadgetbridgeIntents`**: Asks Gadgetbridge to sync and export when the app opens, and sends each weigh-in's weight (with the height) to its profile.
 * **`com.uniscale.app.sync.LocalReadings`**: Keeps the phone's weigh-ins and BP readings (newest 200, last 90 days) in app-private storage until the hub has them.
 * **`com.uniscale.app.sync.HubSyncManager`**: Async HTTP client that delivers collected telemetry payloads to the UniScale server.
 * **`com.uniscale.app.config.AppConfigManager`**: Manages portable application preferences with in-memory caching and JSON file import/export.
@@ -119,6 +120,21 @@ apps read Gadgetbridge's private folder, so UniScale reads the copy Gadgetbridge
 
    Each record is uploaded once per hub and user. Second-by-second data and GPS tracks stay in the watch's FIT files; import those on the
    server (see the Garmin importer) if you want them.
+
+### Gadgetbridge Intent API (sync on open, profile weight/height)
+
+`GadgetbridgeIntents` talks to Gadgetbridge through its Intent API broadcasts. Each part needs its own switch in
+Gadgetbridge under **Settings → Developer options → Intent API**; with a switch off, Gadgetbridge ignores that
+broadcast and the scheduled auto-export carries on as before.
+
+* **Sync on open.** When the app comes to the foreground (at most once a minute) it sends `ACTIVITY_SYNC`. When
+  Gadgetbridge broadcasts `ACTIVITY_SYNC_FINISH` the app sends `TRIGGER_DATABASE_EXPORT`, and on
+  `DATABASE_EXPORT_SUCCESS` it reloads the watch data. Needs "Allow activity sync", "Broadcast on activity sync
+  finish", "Allow database export" and "Broadcast on database export".
+* **Profile weight and height.** After each weigh-in the app sets Gadgetbridge's `activity_user_weight_kg` and
+  `activity_user_height_cm` (whole kg and cm; the height comes from the app's settings) with `SET_GLOBAL_SETTING`.
+  Needs "Allow 3rd party apps to change settings", then a Gadgetbridge restart. Gadgetbridge's Garmin support
+  doesn't send these to the watch (a Garmin uses the profile set on the watch itself), but other watches use them.
 
 ### Scale and blood-pressure readings
 

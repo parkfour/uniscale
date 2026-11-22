@@ -306,6 +306,7 @@ Located in `android/`, built with:
 * **Direct BLE Scanner & Handshake Router**
 * **Real-Time 125 Hz ECG Canvas**
 * **Gadgetbridge Auto-Export Reader:** In Settings → Data, tap **Watch** and pick Gadgetbridge's auto-export file; nightly sleep, workout summaries and daily steps and distance sync to the hub from it, also in the background (Settings → Background Sync: Off, 15m, 30m, 1h, 2h or 4h, which also sends the phone's weigh-ins and BP readings and queued supplement ticks).
+* **Gadgetbridge Intent API:** With Gadgetbridge's Intent API switches on, opening the app makes Gadgetbridge sync the watch and export its database, and each weigh-in updates Gadgetbridge's profile weight and height (see docs/mobile_app.md).
 * **No Health Connect:** the app neither reads nor writes Android Health Connect. Weigh-ins and BP readings are kept in the app's private storage until the hub has them; the Weight and BP tiles show those plus the hub's history.
 * **Declarative Mobile Configuration (`uniscale_config.json`):**
   * **In-App Settings Dialog:** Tap the gear icon in the top app bar to configure upstream Hub URL, API bearer token, auto-sync switches, and hardware driver toggles. Includes an instant "Test Hub Connection" latency ping.
