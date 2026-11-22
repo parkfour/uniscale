@@ -23,6 +23,7 @@ import com.uniscale.app.model.PatternsState
 import com.uniscale.app.model.SleepData
 import com.uniscale.app.model.WeightData
 import com.uniscale.app.sync.GadgetbridgeExport
+import com.uniscale.app.sync.GadgetbridgeIntents
 import com.uniscale.app.sync.DoneSound
 import com.uniscale.app.sync.GarminSyncManager
 import com.uniscale.app.sync.LocalReadings
@@ -47,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var localReadings: LocalReadings
     private lateinit var garminSync: GarminSyncManager
     private lateinit var gadgetbridge: GadgetbridgeExport
+    private lateinit var gbIntents: GadgetbridgeIntents
     private lateinit var protocol: SupplementProtocol
     private val showChat = mutableStateOf(false)
     // Reminders and Dr. Gemma's replies are notifications; nothing else needs this permission.
@@ -96,6 +98,8 @@ class MainActivity : ComponentActivity() {
         localReadings = LocalReadings(this)
         garminSync = GarminSyncManager(this)
         gadgetbridge = GadgetbridgeExport(this)
+        gbIntents = GadgetbridgeIntents(this) { runOnUiThread { loadHistory() } }
+        gbIntents.register()
         protocol = SupplementProtocol(this, hubSyncManager)
         showChat.value = intent?.getBooleanExtra(Notifications.EXTRA_OPEN_CHAT, false) == true
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -113,6 +117,7 @@ class MainActivity : ComponentActivity() {
                     hubSyncManager.uploadWeight(weight)
                 }
                 garminSync.uploadWeight(weight)
+                gbIntents.setProfile(weight.weightKg, configManager.config.value.userHeightCm)
                 loadHistory()
             }
         }
@@ -217,6 +222,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         loadHistory()
+        gbIntents.refresh()
         checkAndRequestPermissions(forceRestart = true)
     }
 
@@ -375,6 +381,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        gbIntents.unregister()
         bleManager.stopScan()
     }
 }
