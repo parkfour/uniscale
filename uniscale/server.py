@@ -8,6 +8,7 @@ import secrets
 import tempfile
 import zipfile
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -227,6 +228,19 @@ def append_record(record_dict: Dict[str, Any]):
         f.write(json.dumps(record_dict) + "\n")
 
 
+@lru_cache(maxsize=1)
+def build_info() -> Dict[str, Optional[str]]:
+    """The package version and, when running from a git checkout (as deployed), its commit."""
+    import subprocess
+    from uniscale import __version__
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=os.path.dirname(os.path.abspath(__file__)),
+                                capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        commit = None
+    return {"version": __version__, "commit": commit}
+
+
 @app.get("/api/config")
 def get_public_config():
     """Returns safe, redacted configuration for UI inspection."""
@@ -244,6 +258,7 @@ def get_public_config():
             "omron": config.devices.enable_omron,
         },
         "known_devices_count": len(config.devices.known),
+        **build_info(),
     }
 
 
@@ -331,7 +346,8 @@ def get_summary():
 @app.get("/api/activity/today")
 def get_activity_today():
     records = load_all_records()
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    from uniscale.day import today
+    today_str = today(get_db_path()).isoformat()
 
     today_activity = None
     latest_activity = None
@@ -439,6 +455,9 @@ def sync_activity(data: DailyActivity):
     d = data.model_dump(mode="json")
     d["type"] = "activity"
     append_record(d)
+    if data.timezone:
+        from uniscale.day import set_zone
+        set_zone(data.timezone, get_db_path())
     return {"status": "saved", "id": d.get("date")}
 
 
@@ -461,7 +480,8 @@ def get_heart_rate(hours: float = 2):
 def get_activity_days(days: int = 30):
     """Daily watch activity, newest first, from yesterday (the last complete day) back `days` days."""
     from datetime import date, timedelta
-    today = date.today()
+    from uniscale.day import today as local_today
+    today = local_today(get_db_path())
     oldest = (today - timedelta(days=max(1, min(days, 366)))).isoformat()
     rows = [r for r in load_all_records()
             if r.get("type") == "activity" and oldest <= str(r.get("date") or "") < today.isoformat()]
@@ -786,7 +806,8 @@ def forget_place(known_id: str):
 @app.post("/api/places", status_code=status.HTTP_201_CREATED)
 def add_place(req: AddCustomPlaceRequest):
     from uniscale.places import add_custom_place
-    date_str = req.date or (datetime.now(timezone.utc).astimezone().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+    from uniscale.day import yesterday
+    date_str = req.date or yesterday(get_db_path())
     lat = req.avg_lat if req.avg_lat is not None else 0.0
     lon = req.avg_lon if req.avg_lon is not None else 0.0
     dur = req.duration_seconds if req.duration_seconds is not None else 3600
@@ -1753,6 +1774,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 </tbody>
             </table>
         </div>
+        <div id="app-version" style="text-align: center; color: var(--text-muted); font-size: 12px; margin: 16px 0;"></div>
     </div>
 
     <!-- Modal Dialog for Trends and Device Telemetry -->
@@ -1881,7 +1903,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     document.getElementById('weight-lb').innerHTML = `${w.weight_lb || (w.weight_kg * 2.20462).toFixed(1)} <span style="font-size: 18px; font-weight: 500;">lb</span>`;
                     document.getElementById('weight-kg').innerText = `(${w.weight_kg} kg)`;
                     document.getElementById('weight-dev').innerText = w.device_name || 'Scale';
-                    document.getElementById('weight-ts').innerText = (w.timestamp || '').substring(0, 19).replace('T', ' ');
+                    document.getElementById('weight-ts').innerText = fmtTs(w.timestamp || '');
                 }
 
                 if (data.latest_bp) {
@@ -1889,7 +1911,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     document.getElementById('bp-val').innerHTML = `${bp.systolic}/${bp.diastolic} <span style="font-size: 18px; font-weight: 500;">mmHg</span>`;
                     document.getElementById('bp-pulse').innerText = `Pulse: ${bp.pulse ?? "--"} bpm`;
                     document.getElementById('bp-dev').innerText = bp.device_name || 'Cuff';
-                    document.getElementById('bp-ts').innerText = (bp.timestamp || '').substring(0, 19).replace('T', ' ');
+                    document.getElementById('bp-ts').innerText = fmtTs(bp.timestamp || '');
                 }
 
                 if (data.latest_activity) {
@@ -1916,7 +1938,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     drawEcg(data.latest_ecg.samples_mv);
                     document.getElementById('ecg-hr').innerText = `${data.latest_ecg.heart_rate || 75} bpm`;
                     document.getElementById('ecg-status').innerText = data.latest_ecg.rhythm_status || 'Normal Sinus Rhythm';
-                    document.getElementById('ecg-ts').innerText = (data.latest_ecg.timestamp || '').substring(0, 19).replace('T', ' ');
+                    document.getElementById('ecg-ts').innerText = fmtTs(data.latest_ecg.timestamp || '');
                 } else {
                     drawGridOnly();
                 }
@@ -2151,7 +2173,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                     }
 
                     tr.innerHTML = `
-                        <td style="color: var(--text-muted);">${(r.timestamp || r.date || '').substring(0, 19).replace('T', ' ')}</td>
+                        <td style="color: var(--text-muted);">${fmtTs(r.timestamp || r.date || '')}</td>
                         <td><span class="tag ${tagClass}">${typeName}</span></td>
                         <td style="font-weight: 600;">${val}</td>
                         <td style="color: var(--text-muted);">${origin}</td>
@@ -2331,7 +2353,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             [...filtered].reverse().forEach(r => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td style="color: var(--text-muted);">${(r.timestamp || '').substring(0, 19).replace('T', ' ')}</td>
+                    <td style="color: var(--text-muted);">${fmtTs(r.timestamp || '')}</td>
                     <td style="font-weight: 700; color: var(--accent-purple);">${(r.weight_lb || (r.weight_kg * 2.20462)).toFixed(1)} lb (${r.weight_kg.toFixed(1)} kg)</td>
                     <td>${r.bmi ? r.bmi.toFixed(1) : '--'}</td>
                     <td>${r.body_fat_percent ? `${r.body_fat_percent.toFixed(1)}%` : (r.impedance ? `${r.impedance} Ω` : '--')}</td>
@@ -2453,7 +2475,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             [...filtered].reverse().forEach(r => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td style="color: var(--text-muted);">${(r.timestamp || '').substring(0, 19).replace('T', ' ')}</td>
+                    <td style="color: var(--text-muted);">${fmtTs(r.timestamp || '')}</td>
                     <td style="font-weight: 700; color: var(--accent-red);">${r.systolic}/${r.diastolic} mmHg</td>
                     <td style="color: var(--accent-blue);">${r.pulse ?? "--"} bpm</td>
                     <td style="color: var(--text-muted);">${r.device_name || 'Cuff'}</td>
@@ -2919,6 +2941,15 @@ HTML_CONTENT = r"""<!DOCTYPE html>
         function fmtHrr(w) {
             if (w.hr_recovery_1min == null && w.hr_recovery_2min == null) return '';
             return `HRR ${w.hr_recovery_1min ?? '--'} / ${w.hr_recovery_2min ?? '--'} bpm`;
+        }
+        // Times are stored in UTC; show them in the browser's zone (YYYY-MM-DD HH:MM). A bare date stays as is.
+        function localDate(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+        function fmtTs(ts) {
+            const d = new Date(ts);
+            if (!ts || !String(ts).includes('T') || isNaN(d)) return ts || '';
+            return `${localDate(d)} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         }
         function fmtWhen(ts) {
             const d = new Date(ts);
@@ -3809,7 +3840,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
                 recs.forEach(r => {
                     const tr = document.createElement('tr');
                     const tsStr = (r.timestamp || '');
-                    const displayTs = tsStr.substring(0, 16).replace('T', ' ');
+                    const displayTs = fmtTs(tsStr);
                     tr.innerHTML = `
                         <td style="color: var(--text-muted);">${esc(displayTs)}</td>
                         <td style="font-weight: 700;">${esc(r.name)}</td>
@@ -4190,7 +4221,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             // Past day entry bar
             const yDate = new Date();
             yDate.setDate(yDate.getDate() - 1);
-            const yesterdayStr = yDate.toISOString().substring(0, 10);
+            const yesterdayStr = localDate(yDate);
             const inputStyle = 'width: 55px; background: var(--surface-1, #1e293b); border: 1px solid var(--border, #334155); color: #f8fafc; border-radius: 6px; padding: 4px 6px; font-size: 13px; text-align: center;';
             const container = document.getElementById('modalDeviceTelemetry');
             container.style.display = 'block';
@@ -4446,7 +4477,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             // Manual Place Entry Form
             const yDate = new Date();
             yDate.setDate(yDate.getDate() - 1);
-            const defaultDate = yDate.toISOString().substring(0, 10);
+            const defaultDate = localDate(yDate);
             const telemetryContainer = document.getElementById('modalDeviceTelemetry');
             telemetryContainer.style.display = 'block';
             telemetryContainer.innerHTML = `
@@ -5110,6 +5141,7 @@ HTML_CONTENT = r"""<!DOCTYPE html>
             fetch('/api/profile').then(r => r.json()).catch(() => ({})),
         ]).then(([cfg, prof]) => {
             signedInUser = cfg.user || null;
+            if (cfg.version) document.getElementById('app-version').innerText = `uniscale v${cfg.version}${cfg.commit ? ' · ' + cfg.commit : ''}`;
             showProfileName(prof.name);
         });
 

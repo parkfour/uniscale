@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from uniscale.config import vault_db_path
+from uniscale.day import yesterday as _yesterday, zone
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ def detect_home(points: List[Dict[str, Any]], db_path: Optional[str] = None) -> 
     if any(_is_home(k["name"]) for k in state.get("known", [])):
         return None
     night = [p for p in points if float(p.get("accuracy", 15.0)) <= MAX_ACCURACY_M and p.get("epoch")
-             and datetime.fromtimestamp(p["epoch"], tz=timezone.utc).astimezone().hour < 5]
+             and datetime.fromtimestamp(p["epoch"], tz=zone(db_path)).hour < 5]
     if len(night) < 20:
         return None
     (clat, clon), _ = Counter((round(p["lat"], 3), round(p["lon"], 3)) for p in night).most_common(1)[0]
@@ -328,7 +329,7 @@ def compute_dwell_places(
     Calculates average GPS position, confidence range, and preserves existing POI assignments.
     """
     if not target_date or target_date == "previous":
-        target_date = (datetime.now(timezone.utc).astimezone().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+        target_date = _yesterday(db_path)
 
     raw_points = points if points is not None else _load_raw_locations(db_path)
     if not raw_points:
@@ -337,8 +338,9 @@ def compute_dwell_places(
     # OwnTracks reports on arrival and then stays quiet until you move, so a stay lasts from its
     # first report until the first report somewhere else. The day starts wherever the last report
     # before midnight put you, and its last stay runs to midnight (or now, for today).
-    day_start = int(datetime.strptime(target_date, "%Y-%m-%d").astimezone().timestamp())
-    day_end = min(int((datetime.strptime(target_date, "%Y-%m-%d") + timedelta(days=1)).astimezone().timestamp()),
+    tz = zone(db_path)
+    day_start = int(datetime.strptime(target_date, "%Y-%m-%d").replace(tzinfo=tz).timestamp())
+    day_end = min(int((datetime.strptime(target_date, "%Y-%m-%d") + timedelta(days=1)).replace(tzinfo=tz).timestamp()),
                   int(datetime.now(timezone.utc).timestamp()))
     raw_points = [p for p in raw_points if float(p.get("accuracy", 15.0)) <= MAX_ACCURACY_M]
     before = [p for p in raw_points if p.get("epoch") and day_start - 86400 <= p["epoch"] < day_start]
@@ -353,7 +355,7 @@ def compute_dwell_places(
         p_epoch = p.get("epoch")
         p_ts = str(p.get("timestamp") or "")
         if p_epoch:
-            dt = datetime.fromtimestamp(p_epoch, tz=timezone.utc).astimezone()
+            dt = datetime.fromtimestamp(p_epoch, tz=tz)
             p_date = dt.strftime("%Y-%m-%d")
         elif p_ts:
             p_date = p_ts[:10]
@@ -407,8 +409,8 @@ def compute_dwell_places(
             avg_acc = sum(float(pt.get("accuracy", 15.0)) for pt in cluster) / len(cluster)
             confidence_range = max(50.0, round(max_drift + (avg_acc / 2.0), 1))
 
-            start_dt = datetime.fromtimestamp(start_epoch, tz=timezone.utc).astimezone()
-            end_dt = datetime.fromtimestamp(end_epoch, tz=timezone.utc).astimezone()
+            start_dt = datetime.fromtimestamp(start_epoch, tz=tz)
+            end_dt = datetime.fromtimestamp(end_epoch, tz=tz)
 
             place_id = f"place_{target_date}_{int(avg_lat*1000):+07d}_{int(avg_lon*1000):+07d}_{idx}"
 
@@ -487,7 +489,7 @@ def get_dwell_places(
         except Exception as e:  # recorder down or misconfigured: show what we have
             logger.warning(f"OwnTracks Recorder sync failed: {e}")
         state = _load_places_state(db_path)
-        yesterday = (datetime.now(timezone.utc).astimezone().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = _yesterday(db_path)
         if not any(p.get("date") == yesterday for p in state.get("places", [])):
             # ponytail: rescans locations.jsonl on each call while yesterday has no place; index by date if it grows large
             compute_dwell_places(db_path, yesterday)
@@ -504,7 +506,7 @@ def get_dwell_places(
         }
 
     if not target_date or target_date == "previous":
-        target_date = (datetime.now(timezone.utc).astimezone().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+        target_date = _yesterday(db_path)
 
     places = [p for p in state.get("places", []) if p.get("date") == target_date]
 
@@ -642,10 +644,10 @@ def _recorder_target(cfg) -> Tuple[str, str]:
     return user, device
 
 
-def fetch_recorder_day(cfg, day: str) -> List[Dict[str, Any]]:
+def fetch_recorder_day(cfg, day: str, tz=None) -> List[Dict[str, Any]]:
     """One local calendar day of points from the Recorder, as {lat, lon, epoch, accuracy}."""
     user, device = _recorder_target(cfg)
-    start = datetime.strptime(day, "%Y-%m-%d").astimezone() - timedelta(days=1)  # day before too: where the day began
+    start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=tz or zone()) - timedelta(days=1)  # day before too: where the day began
     end = start + timedelta(days=2)
     fmt = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
     body = _recorder_get(cfg, "/api/0/locations", {"user": user, "device": device, "from": fmt(start), "to": fmt(end)})
@@ -670,7 +672,7 @@ def sync_recorder(db_path: Optional[str] = None, days: Optional[int] = None, cfg
         cfg = load_config().owntracks
     if not cfg.recorder_url:
         return []
-    yesterday = datetime.now(timezone.utc).astimezone().date() - timedelta(days=1)
+    yesterday = datetime.strptime(_yesterday(db_path), "%Y-%m-%d").date()
     state = _load_places_state(db_path)
     if days:
         first = yesterday - timedelta(days=days - 1)
@@ -683,7 +685,7 @@ def sync_recorder(db_path: Optional[str] = None, days: Optional[int] = None, cfg
     d = first
     while d <= yesterday:
         day = d.strftime("%Y-%m-%d")
-        pts = fetch_recorder_day(cfg, day)
+        pts = fetch_recorder_day(cfg, day, zone(db_path))
         seen += pts
         compute_dwell_places(db_path, day, points=pts)
         state = _load_places_state(db_path)

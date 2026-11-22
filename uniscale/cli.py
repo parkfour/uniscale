@@ -162,7 +162,8 @@ def cmd_place(args):
 
     if action == "add":
         name = args.name
-        target_date = getattr(args, "date", None) or (datetime.now(timezone.utc).astimezone().date() - timedelta(days=1)).strftime("%Y-%m-%d")
+        from uniscale.day import yesterday
+        target_date = getattr(args, "date", None) or yesterday(v_path)
         mins = getattr(args, "mins", 60) or 60
         lat = getattr(args, "lat", 0.0) or 0.0
         lon = getattr(args, "lon", 0.0) or 0.0

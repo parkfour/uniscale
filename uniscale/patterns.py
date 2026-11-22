@@ -8,6 +8,8 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
+from uniscale.day import local_day, today as local_today, zone
+
 DAYS = 90
 MIN_DAYS = 8          # fewer paired days than this and a correlation is noise
 MIN_R = 0.3           # weaker than this isn't worth the model's attention
@@ -32,12 +34,12 @@ def _mean(xs: List[float]) -> Optional[float]:
     return round(sum(xs) / len(xs), 1) if xs else None
 
 
-def _health_by_day(records: List[Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+def _health_by_day(records: List[Dict[str, Any]], tz) -> Dict[str, Dict[str, float]]:
     """Per day: last weight, mean BP, resting HR and steps, and the night's sleep (its record's date)."""
     per: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for r in records:
         t = r.get("type")
-        day = str(r.get("date") or r.get("timestamp") or "")[:10]
+        day = str(r["date"])[:10] if r.get("date") else local_day(r.get("timestamp"), tz)
         if not day:
             continue
         if t == "weight" and (r.get("weight_lb") or r.get("weight_kg")):
@@ -102,9 +104,9 @@ def daily_log(db_path: str, records: List[Dict[str, Any]], days: int = DAYS,
                for h in get_daily_history(db_path, days=0, spec=spec)} if spec else {}
     first_count = min(counted) if counted else None
     places = _places_by_day(db_path)
-    health = _health_by_day(records)
+    health = _health_by_day(records, zone(db_path))
 
-    end = today or date.today()
+    end = today or local_today(db_path)
     rows = []
     for i in range(days - 1, -1, -1):
         day = (end - timedelta(days=i)).isoformat()

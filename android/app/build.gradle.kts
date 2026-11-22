@@ -15,6 +15,14 @@ val keystoreProperties = Properties().apply {
     }
 }
 
+// Shown on the settings page: the same version as the hub (uniscale/__init__.py) and the commit built.
+val hubVersion = Regex("__version__ = \"([^\"]+)\"")
+    .find(rootProject.file("../uniscale/__init__.py").readText())?.groupValues?.get(1) ?: "0.0.0"
+val gitCommit = runCatching {
+    ProcessBuilder("git", "rev-parse", "--short", "HEAD").directory(rootProject.projectDir).start()
+        .inputStream.bufferedReader().readText().trim()
+}.getOrNull().orEmpty().ifEmpty { "unknown" }
+
 android {
     namespace = "com.uniscale.app"
     compileSdk = 35
@@ -25,7 +33,8 @@ android {
         targetSdk = 35
         // CI passes the commit count so every published APK is an upgrade.
         versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
+        versionName = System.getenv("VERSION_NAME") ?: hubVersion
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -62,6 +71,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

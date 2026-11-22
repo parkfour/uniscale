@@ -216,6 +216,8 @@ class HubSyncManager(
             json.put("steps", activity.steps)
             json.put("distance_km", activity.distanceKm)
             json.put("source", activity.deviceName)
+            // The day was counted in the phone's zone (which Gadgetbridge sets on the watch); the hub uses it for "today".
+            json.put("timezone", java.time.ZoneId.systemDefault().id)
             activity.restingHeartRate?.let { json.put("resting_heart_rate", it) }
             activity.avgHeartRate?.let { json.put("avg_heart_rate", it) }
             activity.minHeartRate?.let { json.put("min_heart_rate", it) }

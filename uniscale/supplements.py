@@ -313,26 +313,23 @@ def get_supplements_summary(
                 except Exception:
                     pass
 
-    def _local_day(ts) -> str:
-        try:
-            dt = datetime.fromisoformat(str(ts))
-        except ValueError:
-            return str(ts or "")[:10]
-        return (dt if dt.tzinfo is None else dt.astimezone()).strftime("%Y-%m-%d")
+    from uniscale.day import local_day, today, zone
+    tz = zone(path)
+    now = today(path)
 
     # Sort chronological
     records.sort(key=lambda x: str(x.get("timestamp") or ""))
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now.isoformat()
 
     # Group by date
     today_records: List[Dict[str, Any]] = []
     recent_history: List[Dict[str, Any]] = []
-    cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff_date = (now - timedelta(days=days)).isoformat()
 
-    # Timestamps are stored in UTC; bucket them by the local calendar day.
+    # Timestamps are stored in UTC; bucket them by the person's calendar day.
     for r in records:
-        r["_day"] = ts = _local_day(r.get("timestamp"))
+        r["_day"] = ts = local_day(r.get("timestamp"), tz)
         if ts >= cutoff_date:
             recent_history.append(r)
         if ts == today_str:
@@ -368,7 +365,7 @@ def get_supplements_summary(
     # Adherence over last N days
     adherence_by_day: Dict[str, int] = {}
     for i in range(days):
-        day_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+        day_date = (now - timedelta(days=i)).isoformat()
         count = sum(1 for r in recent_history if r["_day"] == day_date)
         adherence_by_day[day_date] = count
 

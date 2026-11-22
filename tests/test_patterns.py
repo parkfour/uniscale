@@ -38,7 +38,7 @@ def _vault(tmp_path, days=20):
 
 def test_daily_log_and_next_day_pattern(tmp_path, monkeypatch):
     vault = _vault(tmp_path)
-    monkeypatch.setattr("uniscale.patterns.date", type("D", (date,), {"today": staticmethod(lambda: TODAY)}))
+    monkeypatch.setattr("uniscale.patterns.local_today", lambda db_path=None: TODAY)
     data = build_patterns(vault, load_vault(vault))
 
     first = data["rows"][-1]
@@ -61,7 +61,7 @@ def test_patterns_endpoint_gives_plain_lines(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import uniscale.server as server
     vault = _vault(tmp_path)
-    monkeypatch.setattr("uniscale.patterns.date", type("D", (date,), {"today": staticmethod(lambda: TODAY)}))
+    monkeypatch.setattr("uniscale.patterns.local_today", lambda db_path=None: TODAY)
     monkeypatch.setattr(server, "get_db_path", lambda: vault)
     body = TestClient(server.app).get("/api/patterns").json()
     assert body["days"] == 90 and body["logged_days"] == 20
@@ -70,7 +70,7 @@ def test_patterns_endpoint_gives_plain_lines(tmp_path, monkeypatch):
 
 def test_log_days_trims_the_table_but_not_the_patterns(tmp_path, monkeypatch):
     vault = _vault(tmp_path, days=40)
-    monkeypatch.setattr("uniscale.patterns.date", type("D", (date,), {"today": staticmethod(lambda: TODAY)}))
+    monkeypatch.setattr("uniscale.patterns.local_today", lambda db_path=None: TODAY)
     data = build_patterns(vault, load_vault(vault))
     short = patterns_prompt(data, log_days=10)
     assert (TODAY - timedelta(days=9)).isoformat() in short and (TODAY - timedelta(days=10)).isoformat() not in short
@@ -87,7 +87,7 @@ def test_no_counter_or_places_still_builds(tmp_path):
 
 def test_dossier_carries_the_patterns_and_context_follows_config(tmp_path, monkeypatch):
     vault = _vault(tmp_path)
-    monkeypatch.setattr("uniscale.patterns.date", type("D", (date,), {"today": staticmethod(lambda: TODAY)}))
+    monkeypatch.setattr("uniscale.patterns.local_today", lambda db_path=None: TODAY)
     sent = {}
 
     def fake_query(chat, **kw):

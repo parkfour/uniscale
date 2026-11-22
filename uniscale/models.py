@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class DeviceType(str, Enum):
@@ -138,6 +138,15 @@ class DailyActivity(BaseModel):
     body_battery_high: Optional[int] = Field(default=None, ge=0, le=100)
     body_battery_low: Optional[int] = Field(default=None, ge=0, le=100)
     source: str = "garmin"
+    # The wearable's IANA zone (e.g. America/Chicago): the zone this day was counted in, and the one the
+    # hub then uses for this person's "today".
+    timezone: Optional[str] = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: Optional[str]) -> Optional[str]:
+        from uniscale.day import valid_zone
+        return valid_zone(v) if v else None
 
 
 class LabMarker(BaseModel):

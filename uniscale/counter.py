@@ -37,8 +37,9 @@ def _resolve(item: str, spec: Optional[CounterSet]) -> str:
     raise ValueError(f"Unknown counter '{item}' (counters: {known})")
 
 
-def _today(target_date: Optional[str]) -> str:
-    return target_date or datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+def _today(target_date: Optional[str], db_path: Optional[str]) -> str:
+    from uniscale.day import today
+    return target_date or today(db_path).isoformat()
 
 
 def _load_counters_raw(db_path: Optional[str] = None) -> Dict[str, Any]:
@@ -99,7 +100,7 @@ def get_counter_state(db_path: Optional[str] = None, target_date: Optional[str] 
     spec = spec or _spec(db_path)
     elements = _elements(spec)
     keys = [e["key"] for e in elements]
-    day = _today(target_date)
+    day = _today(target_date, db_path)
     raw = _load_counters_raw(db_path)
     by_date = raw["by_date"]
     counts = _counts(by_date.get(day, {}), keys)
@@ -135,7 +136,7 @@ def adjust_counter(
     key = _resolve(item, spec)
     label = next(e["label"] for e in _elements(spec) if e["key"] == key)
     ts = timestamp or datetime.now(timezone.utc).isoformat()
-    day = _today(target_date)
+    day = _today(target_date, db_path)
 
     raw = _load_counters_raw(db_path)
     day_entry = raw["by_date"].setdefault(day, {})
@@ -163,7 +164,7 @@ def set_counter(counts: Dict[str, int], db_path: Optional[str] = None, target_da
     """Sets explicit counts for the day; `counts` is keyed by element key or label."""
     spec = spec or _spec(db_path)
     resolved = {_resolve(item, spec): max(0, int(n)) for item, n in counts.items()}
-    day = _today(target_date)
+    day = _today(target_date, db_path)
     raw = _load_counters_raw(db_path)
     day_entry = raw["by_date"].setdefault(day, {})
     day_entry.update(resolved)
