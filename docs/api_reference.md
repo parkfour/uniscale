@@ -29,13 +29,15 @@ Returns the operational health and reachability of the service.
   ```
 
 #### `GET /api/config`
-Returns safe, sanitized server configuration settings.
+Returns safe, sanitized server configuration settings, with the running `version` and, when the hub runs from a
+git checkout (as deployed), its `commit`; the dashboard shows both under Imported Health History.
 * **Response `200 OK`:**
   ```json
   {
     "storage_backend": "jsonl",
-    "log_level": "INFO",
-    "auto_scan": true
+    "auto_scan": true,
+    "version": "0.2.0",
+    "commit": "b3b5d93"
   }
   ```
 
@@ -188,6 +190,11 @@ sent again as it fills up. The phone app sends Garmin's resting heart rate, the 
 `min_heart_rate` and `max_heart_rate` from the watch's per-minute samples, and `active_minutes` (Garmin intensity
 minutes, moderate + vigorous), Garmin stress for the day (`avg_stress`, `max_stress`, 0-100) and Body Battery
 (`body_battery`, the latest reading, with the day's `body_battery_high` and `body_battery_low`).
+
+`timezone` (optional, an IANA name such as `America/Chicago`; anything else is `422`) is the wearable's zone, the one
+the day was counted in. The hub keeps the latest in `timezone.json` next to the vault and uses it for what "today"
+and "yesterday" mean everywhere (counter, supplement checklist, patterns, places, activity days); until a wearable
+reports one, it uses the hub's own zone. The dashboard shows times in the browser's zone.
 * **Status:** `201 Created`
 * **Payload:**
   ```json
@@ -198,7 +205,8 @@ minutes, moderate + vigorous), Garmin stress for the day (`avg_stress`, `max_str
     "calories": 520,
     "active_minutes": 65,
     "resting_heart_rate": 58,
-    "source": "Garmin"
+    "source": "Garmin",
+    "timezone": "America/Chicago"
   }
   ```
 
