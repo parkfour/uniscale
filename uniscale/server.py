@@ -120,8 +120,8 @@ async def authenticate(request: Request, call_next):
         return _unauthorized()
     try:
         user = normalize_user(user)
-    except ValueError as e:
-        return JSONResponse(status_code=403, content={"detail": str(e)})
+    except ValueError:
+        return JSONResponse(status_code=403, content={"detail": "Invalid user name"})
     reset = current_user.set(user)
     try:
         return await call_next(request)
@@ -1002,7 +1002,7 @@ def chat_endpoint(req: ChatRequest):
 
 
 ICONS_DIR = os.path.join(os.path.dirname(__file__), "static", "icons")
-ICON_FILES = {"icon-192.png", "icon-512.png", "apple-touch-icon.png", "icon.svg"}
+ICON_FILES = {n: os.path.join(ICONS_DIR, n) for n in ("icon-192.png", "icon-512.png", "apple-touch-icon.png", "icon.svg")}
 
 WEB_MANIFEST = {
     "name": "UniScale Health Hub",
@@ -1062,9 +1062,10 @@ def service_worker():
 
 @app.get("/icons/{name}")
 def app_icon(name: str):
-    if name not in ICON_FILES:
+    path = ICON_FILES.get(name)
+    if path is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(os.path.join(ICONS_DIR, name), headers={"Cache-Control": "public, max-age=604800"})
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
 
 
 @app.get("/", response_class=HTMLResponse)
