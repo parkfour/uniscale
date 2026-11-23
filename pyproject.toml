@@ -1,6 +1,6 @@
 [project]
 name = "uniscale"
-version = "0.2.0"
+version = "0.2.1"
 description = "Unified health bridge for Bluetooth smart scales (Yunmai, Fitdays, VeSync), blood pressure monitors, and ECG (Viatom BP2, Omron) with sync to Garmin Connect and Health Connect / Google Fit."
 authors = [{ name = "P Park" }]
 readme = "README.md"
