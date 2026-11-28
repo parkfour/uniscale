@@ -13,7 +13,8 @@ from uniscale.places import (
     compute_dwell_places,
     get_dwell_places,
     update_dwell_place,
-    delete_dwell_place
+    delete_dwell_place,
+    add_custom_place,
 )
 
 
@@ -511,3 +512,28 @@ def test_cli_profile_sets_a_counter_formula(temp_vault, monkeypatch):
     cli.main()
     c = load_profile(temp_vault).counter
     assert c.formula == "D(out)+D(in)=D" and c.elements == ["D(out)", "D(in)"]
+
+
+def test_concurrent_writers_lose_nothing(temp_vault):
+    """The app's syncs arrive together: no write may clobber another's temp file or update."""
+    from concurrent.futures import ThreadPoolExecutor
+    from uniscale.heart_rate import add_samples, _load
+    _profile_counter(temp_vault)
+    now = 2_000_000_000
+    with ThreadPoolExecutor(16) as pool:
+        list(pool.map(lambda i: add_samples([(now - i, 60 + i % 50)], db_path=temp_vault, now=now), range(200)))
+        list(pool.map(lambda i: adjust_counter("D(out)", 1, db_path=temp_vault, target_date="2026-11-28"), range(100)))
+    assert len(_load(temp_vault)) == 200
+    assert get_counter_state(temp_vault, "2026-11-28")["counts"]["d_out"] == 100
+    assert not [f for f in os.listdir(os.path.dirname(temp_vault)) if f.endswith(".tmp")]
+
+
+def test_unreadable_places_file_is_kept_aside_not_overwritten(temp_vault):
+    path = os.path.join(os.path.dirname(temp_vault), "places.json")
+    with open(path, "w") as f:
+        f.write('{"places": [{"id": "x", "name": "Home"')  # torn write
+    add_custom_place("2026-11-28", "Cafe", 30.0, -85.0, db_path=temp_vault)
+    aside = [f for f in os.listdir(os.path.dirname(path)) if f.startswith("places.json.corrupt-")]
+    assert len(aside) == 1
+    with open(os.path.join(os.path.dirname(path), aside[0])) as f:
+        assert '"name": "Home"' in f.read()

@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta, tzinfo
 from typing import Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from uniscale.config import vault_db_path
+from uniscale.config import vault_db_path, write_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +49,7 @@ def set_zone(name: str, db_path: Optional[str] = None) -> None:
     """Records the wearable's zone (a no-op when it hasn't changed)."""
     if zone_name(db_path) == valid_zone(name):
         return
-    path = _file(db_path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"timezone": name}, f)
-    os.replace(tmp, path)
+    write_atomic(_file(db_path), json.dumps({"timezone": name}))
     logger.info(f"Day boundaries now follow {name}")
 
 

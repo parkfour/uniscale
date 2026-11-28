@@ -4,7 +4,7 @@ import math
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from uniscale.config import vault_db_path
+from uniscale.config import read_json, vault_db_path, vault_locked, write_atomic
 from uniscale.day import yesterday as _yesterday, zone
 
 logger = logging.getLogger(__name__)
@@ -155,31 +155,20 @@ def _load_raw_locations(db_path: Optional[str] = None) -> List[Dict[str, Any]]:
 
 
 def _load_places_state(db_path: Optional[str] = None) -> Dict[str, Any]:
-    path = _places_file(db_path)
-    if not os.path.exists(path):
+    data = read_json(_places_file(db_path), None)
+    if not (isinstance(data, dict) and "places" in data):
         return {"places": [], "known": []}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict) and "places" in data:
-                if "known" not in data:  # older files: what was named is what we know
-                    data["known"] = []
-                    for p in data["places"]:
-                        if p.get("name") and (p.get("avg_lat") or p.get("avg_lon")):
-                            _remember(data, p["name"], p["avg_lat"], p["avg_lon"])
-                    _save_places_state(data, db_path)  # ids must stay put
-                return data
-            return {"places": [], "known": []}
-    except Exception as e:
-        logger.warning(f"Failed to load places from {path}: {e}")
-        return {"places": [], "known": []}
+    if "known" not in data:  # older files: what was named is what we know
+        data["known"] = []
+        for p in data["places"]:
+            if p.get("name") and (p.get("avg_lat") or p.get("avg_lon")):
+                _remember(data, p["name"], p["avg_lat"], p["avg_lon"])
+        _save_places_state(data, db_path)  # ids must stay put
+    return data
 
 
 def _save_places_state(state: Dict[str, Any], db_path: Optional[str] = None) -> None:
-    path = _places_file(db_path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
+    write_atomic(_places_file(db_path), json.dumps(state, indent=2))
 
 
 def _format_dwell(seconds: int) -> str:
@@ -239,6 +228,7 @@ def _labelled(stay: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     return dict(stay, name=guess, name_guessed=guess is not None)
 
 
+@vault_locked
 def detect_home(points: List[Dict[str, Any]], db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Where the phone sleeps: the busiest ~100 m cell of overnight (00-05 local) fixes, averaged.
@@ -259,6 +249,7 @@ def detect_home(points: List[Dict[str, Any]], db_path: Optional[str] = None) -> 
     return state["known"][-1]
 
 
+@vault_locked
 def forget_known_place(known_id: str, db_path: Optional[str] = None) -> bool:
     state = _load_places_state(db_path)
     kept = [k for k in state.get("known", []) if k.get("id") != known_id]
@@ -316,6 +307,7 @@ def suggest_names(place_id: str, db_path: Optional[str] = None) -> List[Dict[str
     return known + [p for p in pois if p["name"].lower() not in seen]
 
 
+@vault_locked
 def compute_dwell_places(
     db_path: Optional[str] = None,
     target_date: Optional[str] = None,
@@ -470,6 +462,7 @@ def _shown(place: Dict[str, Any], include_home: bool = False) -> bool:
     return not place.get("is_deleted", False) and (include_home or not _is_home(place.get("name")))
 
 
+@vault_locked
 def get_dwell_places(
     db_path: Optional[str] = None,
     target_date: Optional[str] = None,
@@ -530,6 +523,7 @@ def get_dwell_places(
     }
 
 
+@vault_locked
 def update_dwell_place(
     place_id: str,
     name: Optional[str] = None,
@@ -566,12 +560,14 @@ def update_dwell_place(
     return updated_place
 
 
+@vault_locked
 def delete_dwell_place(place_id: str, db_path: Optional[str] = None) -> bool:
     """Marks a dwell place as deleted."""
     res = update_dwell_place(place_id, is_deleted=True, db_path=db_path)
     return res is not None
 
 
+@vault_locked
 def add_custom_place(
     date_str: str,
     name: str,
@@ -661,6 +657,7 @@ def fetch_recorder_day(cfg, day: str, tz=None) -> List[Dict[str, Any]]:
     return pts
 
 
+@vault_locked
 def sync_recorder(db_path: Optional[str] = None, days: Optional[int] = None, cfg=None) -> List[str]:
     """
     Turns each finished day not yet read from the OwnTracks Recorder into dwell places.

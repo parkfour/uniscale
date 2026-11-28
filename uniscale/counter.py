@@ -10,7 +10,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from uniscale.config import CounterSet, element_key, evaluate_formula, load_profile, vault_db_path
+from uniscale.config import (CounterSet, element_key, evaluate_formula, load_profile, read_json, vault_db_path,
+                             vault_locked, write_atomic)
 
 logger = logging.getLogger(__name__)
 
@@ -43,29 +44,16 @@ def _today(target_date: Optional[str], db_path: Optional[str]) -> str:
 
 
 def _load_counters_raw(db_path: Optional[str] = None) -> Dict[str, Any]:
-    path = _counter_file(db_path)
-    if not os.path.exists(path):
+    data = read_json(_counter_file(db_path), None)
+    if not isinstance(data, dict):
         return {"by_date": {}, "history": []}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return {"by_date": {}, "history": []}
-        data.setdefault("by_date", {})
-        data.setdefault("history", [])
-        return data
-    except Exception as e:
-        logger.warning(f"Error loading counters from {path}: {e}")
-        return {"by_date": {}, "history": []}
+    data.setdefault("by_date", {})
+    data.setdefault("history", [])
+    return data
 
 
 def _save_counters_raw(data: Dict[str, Any], db_path: Optional[str] = None) -> None:
-    path = _counter_file(db_path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
+    write_atomic(_counter_file(db_path), json.dumps(data, indent=2))
 
 
 def _counts(entry: Dict[str, Any], keys: List[str]) -> Dict[str, int]:
@@ -124,6 +112,7 @@ def get_counter_state(db_path: Optional[str] = None, target_date: Optional[str] 
     }
 
 
+@vault_locked
 def adjust_counter(
     item: str,
     delta: int,
@@ -159,6 +148,7 @@ def adjust_counter(
     return get_counter_state(db_path, day, spec)
 
 
+@vault_locked
 def set_counter(counts: Dict[str, int], db_path: Optional[str] = None, target_date: Optional[str] = None,
                 spec: Optional[CounterSet] = None) -> Dict[str, Any]:
     """Sets explicit counts for the day; `counts` is keyed by element key or label."""
@@ -173,6 +163,7 @@ def set_counter(counts: Dict[str, int], db_path: Optional[str] = None, target_da
     return get_counter_state(db_path, day, spec)
 
 
+@vault_locked
 def import_historic_records(entries: List[Dict[str, Any]], db_path: Optional[str] = None) -> int:
     """
     Sets whole days from [{"date": "YYYY-MM-DD", "counts": {"D(out)": 3, ...}}, ...]; the counts may

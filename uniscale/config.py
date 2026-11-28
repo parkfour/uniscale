@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
 import re
 import sys
+import tempfile
+import threading
+import time
 from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
@@ -18,6 +22,53 @@ else:
     import tomli as tomllib  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+# The server answers requests on a thread pool, so the app's syncs land at once: every
+# read-modify-write of a vault JSON file holds this lock.
+# ponytail: one lock per process, so a CLI run beside the server isn't covered; use fcntl.flock if that matters
+_vault_lock = threading.RLock()
+
+
+def vault_locked(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _vault_lock:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+def write_atomic(path: str, text: str) -> None:
+    """Replaces path with text in one step: readers see the old file or the new one, never part of one."""
+    folder = os.path.dirname(os.path.abspath(path))
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def read_json(path: str, default):
+    """The JSON in path, or default when it's missing. An unreadable file is moved aside
+    (path.corrupt-<epoch>) rather than left to be overwritten with default."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+    except ValueError as e:
+        aside = f"{path}.corrupt-{int(time.time())}"
+        os.replace(path, aside)
+        logger.error(f"Unreadable {path} ({e}); kept as {aside}")
+        return default
+
 
 DEFAULT_CONFIG_PATH = os.path.expanduser("~/.config/uniscale/config.toml")
 
@@ -555,12 +606,7 @@ def load_profile(db_path: Optional[str] = None, cfg: Optional[UniscaleConfig] = 
 
 def save_profile(profile: ProfileConfig, db_path: Optional[str] = None, cfg: Optional[UniscaleConfig] = None) -> ProfileConfig:
     """Writes profile.json next to the vault (atomically) and returns what was saved."""
-    path = profile_path(db_path, cfg)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(profile.model_dump(mode="json"), f, indent=2)
-    os.replace(tmp, path)
+    write_atomic(profile_path(db_path, cfg), json.dumps(profile.model_dump(mode="json"), indent=2))
     return profile
 
 

@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from uniscale.models import SupplementIntake
-from uniscale.config import vault_db_path
+from uniscale.config import vault_db_path, vault_locked, write_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -148,14 +148,13 @@ def save_active_stack(stack: List[Dict[str, Any]], db_path: Optional[str] = None
     Persists the user's active regimen stack to supplements_stack.json.
     """
     path = get_stack_file_path(db_path)
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     cleaned = [_normalize_stack_item(item) for item in stack if str(item.get("name", "")).strip()]
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(cleaned, f, indent=2)
+    write_atomic(path, json.dumps(cleaned, indent=2))
     logger.info(f"Saved {len(cleaned)} supplements to active stack in {path}")
     return cleaned
 
 
+@vault_locked
 def add_to_stack(item: Dict[str, Any], db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Adds or updates a supplement compound in the active stack.
@@ -169,6 +168,7 @@ def add_to_stack(item: Dict[str, Any], db_path: Optional[str] = None) -> List[Di
     return save_active_stack(current + [normalized], db_path)
 
 
+@vault_locked
 def remove_from_stack(name: str, db_path: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
     """
     Removes a supplement compound from the active stack.
@@ -192,6 +192,7 @@ def reset_stack_to_config(db_path: Optional[str] = None) -> List[Dict[str, Any]]
     return active_stack(db_path)
 
 
+@vault_locked
 def delete_supplement_intake(timestamp_str: str, name: Optional[str] = None, db_path: Optional[str] = None) -> bool:
     """
     Deletes a logged supplement intake event from measurements.jsonl by timestamp and optional name.
@@ -223,12 +224,8 @@ def delete_supplement_intake(timestamp_str: str, name: Optional[str] = None, db_
                     continue
             kept.append(line_str)
     if removed:
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.writelines(l + "\n" for l in kept)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        # ponytail: other modules append to the vault without the lock; one landing mid-rewrite is lost
+        write_atomic(path, "".join(l + "\n" for l in kept))
     return removed
 
 

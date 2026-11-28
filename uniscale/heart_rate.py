@@ -9,7 +9,7 @@ import os
 import time
 from typing import Dict, List, Optional, Sequence
 
-from uniscale.config import vault_db_path
+from uniscale.config import read_json, vault_db_path, vault_locked, write_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -21,28 +21,18 @@ def _file(db_path: Optional[str]) -> str:
 
 
 def _load(db_path: Optional[str]) -> Dict[int, int]:
-    try:
-        with open(_file(db_path), "r", encoding="utf-8") as f:
-            return {int(t): int(bpm) for t, bpm in json.load(f).items()}
-    except FileNotFoundError:
-        return {}
-    except (ValueError, AttributeError) as e:
-        logger.warning(f"Ignoring unreadable heart_rate.json: {e}")
-        return {}
+    data = read_json(_file(db_path), {})
+    return {int(t): int(bpm) for t, bpm in data.items()} if isinstance(data, dict) else {}
 
 
+@vault_locked
 def add_samples(samples: Sequence[Sequence[int]], db_path: Optional[str] = None, now: Optional[float] = None) -> int:
     """Merges [[epoch seconds, bpm], ...] in; returns how many samples are kept."""
     cutoff = (now or time.time()) - KEEP_DAYS * 86400
     data = _load(db_path)
     data.update({int(t): int(bpm) for t, bpm in samples})
     data = {t: bpm for t, bpm in data.items() if t >= cutoff}
-    path = _file(db_path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({str(t): bpm for t, bpm in sorted(data.items())}, f)
-    os.replace(tmp, path)
+    write_atomic(_file(db_path), json.dumps({str(t): bpm for t, bpm in sorted(data.items())}))
     return len(data)
 
 
