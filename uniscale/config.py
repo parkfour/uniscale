@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import functools
 import json
 import logging
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date
 from pathlib import Path
@@ -23,16 +25,49 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# The server answers requests on a thread pool, so the app's syncs land at once: every
-# read-modify-write of a vault JSON file holds this lock.
-# ponytail: one lock per process, so a CLI run beside the server isn't covered; use fcntl.flock if that matters
-_vault_lock = threading.RLock()
+# The server answers requests on a thread pool and the CLI or BLE daemon may run beside it, so
+# every vault write (a JSON read-modify-write, a check-then-append, a rewrite) holds one lock:
+# flock on <data root>/.vault.lock, which every process resolves the same way. flock belongs to
+# the open file, so threads each opening it exclude each other too; re-entrant within a thread.
+# ponytail: one lock for all users' vaults; per-user lock files if writes ever queue noticeably
+_held = threading.local()
+_lock_file: Optional[str] = None
+
+
+def _vault_lock_path() -> str:
+    global _lock_file
+    if _lock_file is None:
+        override = os.environ.get("UNISCALE_DB_PATH")
+        base = os.path.dirname(os.path.abspath(override)) if override else str(load_config().general.resolved_data_dir)
+        os.makedirs(base, exist_ok=True)
+        _lock_file = os.path.join(base, ".vault.lock")
+    return _lock_file
+
+
+@contextmanager
+def vault_lock():
+    depth = getattr(_held, "depth", 0)
+    if depth == 0:
+        fd = os.open(_vault_lock_path(), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
+        _held.fd = fd
+    _held.depth = depth + 1
+    try:
+        yield
+    finally:
+        _held.depth -= 1
+        if _held.depth == 0:
+            os.close(_held.fd)  # closing releases the lock
 
 
 def vault_locked(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        with _vault_lock:
+        with vault_lock():
             return fn(*args, **kwargs)
     return wrapper
 

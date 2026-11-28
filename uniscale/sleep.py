@@ -5,7 +5,7 @@ import zipfile
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from uniscale.models import SleepSession
-from uniscale.config import vault_db_path
+from uniscale.config import vault_db_path, vault_locked
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,9 @@ def dedupe_sleep(records: List[Dict[str, Any]]) -> tuple:
         else:
             nights[dt] = merge_sleep_records(night, r)
     return list(nights.values()), naps
+
+
+@vault_locked
 
 
 def import_garmin_sleep_from_zip(

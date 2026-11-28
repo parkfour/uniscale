@@ -8,7 +8,7 @@ import zlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uniscale.models import GenomicProfile, GenomicVariant
-from uniscale.config import vault_db_path
+from uniscale.config import vault_db_path, vault_locked
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +303,9 @@ def parse_raw_dna_text(content: str) -> Dict[str, str]:
     return found
 
 
+@vault_locked
+
+
 def import_dna_file(
     path: str,
     father_zip: Optional[str] = None,
@@ -329,6 +332,9 @@ def import_dna_file(
         f.write(json.dumps(prof) + "\n")
     prof["snps_found"] = len(extracted)
     return prof
+
+
+@vault_locked
 
 
 def import_promethease_trio(

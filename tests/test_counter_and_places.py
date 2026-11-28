@@ -537,3 +537,23 @@ def test_unreadable_places_file_is_kept_aside_not_overwritten(temp_vault):
     assert len(aside) == 1
     with open(os.path.join(os.path.dirname(path), aside[0])) as f:
         assert '"name": "Home"' in f.read()
+
+
+def test_vault_lock_excludes_other_processes(temp_vault, monkeypatch):
+    """A CLI run beside the server (another process) must wait for the server's writes, and vice versa."""
+    import subprocess, sys, time
+    from uniscale import config
+    monkeypatch.setenv("UNISCALE_DB_PATH", temp_vault)
+    monkeypatch.setattr(config, "_lock_file", None)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; from uniscale.config import vault_lock\n"
+         "with vault_lock():\n    print('held', flush=True); time.sleep(1)"],
+        stdout=subprocess.PIPE, text=True)
+    assert child.stdout.readline().strip() == "held"
+    start = time.monotonic()
+    with config.vault_lock():
+        with config.vault_lock():  # re-entrant in one thread
+            waited = time.monotonic() - start
+    child.wait()
+    assert waited >= 0.5
+    assert config._lock_file == os.path.join(os.path.dirname(temp_vault), ".vault.lock")

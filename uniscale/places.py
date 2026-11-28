@@ -37,6 +37,9 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return r * c
 
 
+@vault_locked
+
+
 def ingest_location(
     lat: float,
     lon: float,
@@ -84,6 +87,9 @@ def ingest_location(
         f.write(json.dumps(record) + "\n")
 
     return record
+
+
+@vault_locked
 
 
 def ingest_owntracks_payload(payload: Any, db_path: Optional[str] = None) -> List[Dict[str, Any]]:

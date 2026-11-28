@@ -224,9 +224,11 @@ def delete_supplement_intake(timestamp_str: str, name: Optional[str] = None, db_
                     continue
             kept.append(line_str)
     if removed:
-        # ponytail: other modules append to the vault without the lock; one landing mid-rewrite is lost
         write_atomic(path, "".join(l + "\n" for l in kept))
     return removed
+
+
+@vault_locked
 
 
 def log_supplement_intake(

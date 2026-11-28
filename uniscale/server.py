@@ -12,8 +12,9 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, conlist
-from uniscale.config import ProfileConfig, UniscaleConfig, current_user, load_config, load_profile, normalize_user, save_profile, vault_db_path
+from uniscale.config import ProfileConfig, UniscaleConfig, current_user, load_config, load_profile, normalize_user, save_profile, vault_db_path, vault_locked
 from uniscale.models import (
     ActivityWorkout,
     BloodPressureMeasurement,
@@ -219,6 +220,9 @@ def get_db_path() -> str:
 def load_all_records() -> List[Dict[str, Any]]:
     from uniscale.readings import load_vault
     return load_vault(get_db_path())
+
+
+@vault_locked
 
 
 def append_record(record_dict: Dict[str, Any]):
@@ -741,7 +745,7 @@ async def owntracks_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     from uniscale.places import ingest_owntracks_payload
-    ingest_owntracks_payload(body, db_path=get_db_path())
+    await run_in_threadpool(ingest_owntracks_payload, body, db_path=get_db_path())  # waits on the vault lock
     return []
 
 

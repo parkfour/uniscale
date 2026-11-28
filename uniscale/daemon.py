@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Optional
 from bleak import BleakScanner
-from uniscale.config import UniscaleConfig, load_config, vault_db_path
+from uniscale.config import UniscaleConfig, load_config, vault_db_path, vault_locked
 from uniscale.models import BloodPressureMeasurement, EcgRecording, WeightMeasurement
 from uniscale.protocols.etekcity import ETEKCITY_SERVICE_UUID, EtekcityClient, parse_etekcity_packet
 from uniscale.protocols.fitdays import FITDAYS_SERVICE_UUID, FitdaysClient, parse_fitdays_data
@@ -65,6 +65,8 @@ class UniscaleDaemon:
                     logger.warning(f"Hub upload failed [{res.status_code}]: {res.text}")
         except Exception as e:
             logger.error(f"Failed uploading to remote hub {hub_url}: {e}")
+
+    @vault_locked
 
     def log_measurement(self, record_type: str, data: dict):
         with open(self.log_file, "a") as f:

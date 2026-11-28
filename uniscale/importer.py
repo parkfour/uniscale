@@ -20,7 +20,7 @@ from uniscale.models import (
     WeightMeasurement,
     WorkoutSplit,
 )
-from uniscale.config import vault_db_path
+from uniscale.config import vault_db_path, vault_locked
 
 logger = logging.getLogger(__name__)
 
@@ -928,6 +928,9 @@ _DAY_HEART_FIELDS = ("resting_heart_rate", "avg_heart_rate", "min_heart_rate", "
                      "avg_spo2", "heart_points")
 
 
+@vault_locked
+
+
 def _fill_day_gaps(days: List[DailyActivity], db: str) -> int:
     """
     A day the vault already has (from another source) is not imported again, but the heart-rate fields it
@@ -948,6 +951,9 @@ def _fill_day_gaps(days: List[DailyActivity], db: str) -> int:
     with open(db, "a", encoding="utf-8") as f:
         f.writelines(json.dumps(d) + "\n" for d in fills)
     return len(fills)
+
+
+@vault_locked
 
 
 def parse_google_fit_takeout(takeout_path: str, target_db: Optional[str] = None) -> dict:
@@ -1637,6 +1643,9 @@ def _parse_epoch(val: Any) -> Optional[float]:
 def _is_primary_device(device_name: str, device_address: str) -> bool:
     dev = (str(device_name) + " " + str(device_address)).lower()
     return any(k in dev for k in ("yunmai", "fitdays", "omron", "viatom", "bp2", "forerunner", "garmin", "etekcity", "vesync"))
+
+
+@vault_locked
 
 
 def save_history(records: list, target_path: Optional[str] = None, skipped_path: Optional[str] = None) -> int:
